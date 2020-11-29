@@ -152,18 +152,18 @@
         <Bp>
           <Number>0</Number>
           <Type>0</Type>
-          <LineNumber>693</LineNumber>
+          <LineNumber>131</LineNumber>
           <EnabledFlag>1</EnabledFlag>
-          <Address>134230410</Address>
+          <Address>134238282</Address>
           <ByteObject>0</ByteObject>
           <HtxType>0</HtxType>
           <ManyObjects>0</ManyObjects>
           <SizeOfObject>0</SizeOfObject>
           <BreakByAccess>0</BreakByAccess>
           <BreakIfRCount>1</BreakIfRCount>
-          <Filename>../Core/Src/emulator6502.h</Filename>
+          <Filename>..\Core\Src\nes_channels.c</Filename>
           <ExecCommand></ExecCommand>
-          <Expression>\\Project_F405\../Core/Src/emulator6502.h\693</Expression>
+          <Expression>\\Project_F405\../Core/Src/nes_channels.c\131</Expression>
         </Bp>
       </Breakpoint>
       <WatchWindow1>

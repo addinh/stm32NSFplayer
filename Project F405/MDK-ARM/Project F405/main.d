@@ -34,6 +34,7 @@ project f405\main.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim.h
 project f405\main.o: ../Drivers/STM32F4xx_HAL_Driver/Inc/stm32f4xx_hal_tim_ex.h
 project f405\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdio.h
 project f405\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\string.h
+project f405\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
 project f405\main.o: ../Core/Src/nes_channels.h
 project f405\main.o: ../Core/Src/emulator6502.h
 project f405\main.o: ../Core/Src/nsf_array.h

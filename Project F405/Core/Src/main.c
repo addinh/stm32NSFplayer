@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "stdio.h"
 #include "string.h"
+#include "stdlib.h"
 
 #include "nes_channels.h"
 #include "emulator6502.h"
@@ -56,9 +57,27 @@ uint16_t DAC_BUFFER[DAC_BUFFER_LEN] = {0};
 
 //debug
 //uint8_t dummy = 0;
-uint8_t op_debug = 0;
 int16_t button_counter = 0;
 uint8_t SW1_pressed = 0;
+uint8_t led_bug = 0;
+
+//NES channels
+PulseChannel pulse1 = {
+	.volume = 0,
+};
+	
+PulseChannel pulse2 = {
+	.volume = 0,
+};
+	
+TriangleChannel triangle = {
+	.timer_lo = 0,
+};
+	
+NoiseChannel noise = {
+	.shift_register = 1,
+	.volume = 0,
+};
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -73,27 +92,51 @@ static void MX_TIM6_Init(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// TODO move to separate files
-inline void overflowCheck(uint16_t *buffer, uint16_t buffer_len) {
-	//overflow check
-	//TODO scale with AMPLITUDE_SCALE
-	for (uint16_t i = 0; i < buffer_len; ++i) {
-		buffer[i] = (uint16_t)(buffer[i] * 1.5f);
+#define AUDIO_VOLUME 0.25f
+
+void mixAudio(uint16_t *buffer, uint8_t *mix_buffer, uint16_t len) {
+	//perform mixing on a buffer 4 times the length of (half) output to DAC buffer
+	//overall scaling done here
+	//note that len should be the length of the output buffer aka 1/4 length of buffer
+	for (uint16_t i = 0; i < len; ++i) {
+		#define p1 mix_buffer[i]
+		#define p2 mix_buffer[len + i]
+		#define tr mix_buffer[2*len + i]
+		#define ns mix_buffer[3*len + i]
+		
+		//pulse mixing
+		float pulseMix = (p1 + p2) == 0 ? 0 : (95.88f / (8128.0f / (p1 + p2) + 100));
+		//tri and noise mixing
+		float tnMix = (tr + ns) == 0 ? 0 : (159.79f / (1.0f / (tr / 8227.0f + ns / 12241.0f) + 100));
+		
+		//put in buffer with scaling
+		buffer[i] = (uint16_t)((pulseMix + tnMix) * 4095 * AUDIO_VOLUME);
+		
+		//overflow check
 		if (buffer[i] > 4095) buffer[i] = 4095;
 	}
-};
+}
+
+//going safe method here
+uint8_t mix_buffer[DAC_BUFFER_LEN * 4 / 2] = {0};
 
 // DMA INTERRUPTS
 void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
-	//debug
-	//if (button_counter != 25) return;
-	memset(buffer, 0, len * 2);
-	readPulse(buffer, len, &pulse1);
-	readPulse(buffer, len, &pulse2);
-	readTriangle(buffer, len, &triangle);
-	readNoise(buffer, len, &noise);
-	overflowCheck(buffer, len);
-	//dummy = 1;	
+	//create a temp array for mixing
+	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
+	memset(mix_buffer, 0, len * 4);
+	
+	//TODO can mute/unmute channels here
+	readPulse(&mix_buffer[0], len, &pulse1);
+	readPulse(&mix_buffer[len], len, &pulse2);
+	readTriangle(&mix_buffer[2*len], len, &triangle);
+	readNoise(&mix_buffer[3*len], len, &noise);
+	
+	//do mixing
+	mixAudio(buffer, mix_buffer, len);
+	
+	//release memory
+	//free(mix_buffer);
 }
 
 void HAL_DAC_ConvHalfCpltCallbackCh1(DAC_HandleTypeDef *hdac) {
@@ -107,7 +150,7 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac) {
 void initRAM(void) {
 	memset(pRAM, 0, 0x0800);
 	memset(pSRAM, 0, 0x2000);
-	memset(pAPU, 0, 0x0020);
+	//memset(pAPU, 0, 0x0020);
 	memset(pExRAM, 0, 0x1000);
 	memset(pROM_Full, 0, 0x8000);
 	pStack = pRAM + 0x100;
@@ -116,8 +159,6 @@ void initRAM(void) {
 	for (uint32_t i=0; i<16956; ++i) {
 		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
 	}
-	//DEBUG PLS REMOVE
-	pROM_Full[0] = 0x69;
 	
 	pExRAM[0x00] = 0x20;						//JSR
 	uint16_t init_addr = 0xbe34;
@@ -155,19 +196,18 @@ void initRAM(void) {
 
 }
 
-void initCPU() {
+void initSong(uint8_t song_num) {
 	regPC = 0x5000;
-	regA = 3 - 1;
+	regA = (song_num == 0 ? 1 : song_num) - 1; //safety again
 	regX = bPALMode;
-	regY = bCleanAXY ? 0 : 0xCD;
+	regY = 0; //bCleanAXY ? 0 : 0xCD;
 	regSP = 0xFF;
-	if(bCleanAXY)
-		regP = 0x04;
+	//if(bCleanAXY)
+	//	regP = 0x04;
 	bCPUJammed = 0;
 
 	nCPUCycle = nAPUCycle = 0;
 
-	//TODO?
 	for(int i = 0x4000; i < 0x400F; i++)
 		WriteMemory_pAPU(i,0);
 	WriteMemory_pAPU(0x4010,0);
@@ -229,7 +269,7 @@ int main(void)
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
 	initRAM();
-	initCPU();
+	initSong(0); //to be safe, does not work without this
 	initTriangleLookup();
   /* USER CODE END 2 */
 
@@ -239,29 +279,12 @@ int main(void)
 	HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)DAC_BUFFER, DAC_BUFFER_LEN, DAC_ALIGN_12B_R);
 	
-	pulse1 = (PulseChannel){
-		.volume = 0,
-	};
-	
-	pulse2 = (PulseChannel) {
-		.volume = 0,
-	};
-	
-	triangle = (TriangleChannel){
-		.timer_lo = 0,
-	};
-	
-	noise = (NoiseChannel){
-		.shift_register = 1,
-		.volume = 0,
-	};
-	
 	//do init instructions
 	while (regPC != 0x5003) { //until PC reaches after INIT
 		//execute next instruction
 		emulate6502(nCPUCycle + 1);
 		if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000)) {
-			button_counter = -1;
+			led_bug = 1;
 			break;
 		}
 	}
@@ -274,122 +297,42 @@ int main(void)
 			
 		//Wave generation thread
 		static uint32_t last_wav_ticks = 0;
-		static uint32_t prev_button_counter = 0;
+
 		//TODO update time = frame rate
-		//TODO trying at 1Hz
-		if (HAL_GetTick() - last_wav_ticks >= 16) {
+		//TODO trying at 250Hz
+		if (HAL_GetTick() - last_wav_ticks >= 4) {
 			last_wav_ticks = HAL_GetTick();
 			
-			static uint8_t update = 1;
+			static uint8_t wav_counter = 0;
 			
-			if(button_counter && button_counter != -1) {
-				while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
-					//execute next instruction
-					emulate6502(nCPUCycle + 1);
-					if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-						button_counter = -1;
-						break;
+			//do frame clocking at 240Hz
+			clockFrame();
+			
+			//do next frame at 60 Hz
+			if (wav_counter == 0)
+			{
+				if(button_counter && led_bug != 1) {
+					while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
+						//execute next instruction
+						emulate6502(nCPUCycle + 1);
+						if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
+							led_bug = 1;
+							break;
+						}
+					}
+					while (regPC != 0x5007) { //until PC finishes PLAY instructions
+						//execute next instruction
+						emulate6502(nCPUCycle + 1);
+						if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
+							led_bug = 1;
+							break;
+						}
 					}
 				}
-				while (regPC != 0x5007) { //until PC finishes PLAY instructions
-					//execute next instruction
-					emulate6502(nCPUCycle + 1);
-					if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-						button_counter = -1;
-						break;
-					}
-				}
-				update = 1;
 			}
 			
-			if (update) {
-				//link pAPU registers to wave structs
-				pulse1.DDLCVVVV = pAPU[0];
-				pulse1.EPPPNSSS = pAPU[1];
-				pulse1.TTTTTTTT = pAPU[2];
-				pulse1.LLLLLTTT = pAPU[3];
-				pulse1.wave.enable = pAPU[21] & 0x01;
-			
-				pulse2.DDLCVVVV = pAPU[4];
-				pulse2.EPPPNSSS = pAPU[5];
-				pulse2.TTTTTTTT = pAPU[6];
-				pulse2.LLLLLTTT = pAPU[7];
-				pulse1.wave.enable = pAPU[21] & 0x02;
-			
-				triangle.CRRRRRRR = pAPU[8];
-				//triangle.UUUUUUUU = pAPU[9];
-				triangle.TTTTTTTT = pAPU[10];
-				triangle.LLLLLTTT = pAPU[11];
-				pulse1.wave.enable = pAPU[21] & 0x04;
-			
-				noise.UULCVVVV = pAPU[12];
-				//noise.UUUUUUUU = pAPU[13];
-				noise.MUUUPPPP = pAPU[14];
-				noise.LLLLLUUU = pAPU[15];
-				pulse1.wave.enable = pAPU[21] & 0x08;
-			
-				//update corresponding params
-				updatePulse(&pulse1);
-				updatePulse(&pulse2);
-				updateTriangle(&triangle);
-				//updateNoise(&noise);		
-				
-				update = 0;
-			}
-			
-			/*
-			//if (button_counter != 1) button_counter += 1;
-			if (prev_button_counter != button_counter) {
-				//call at beginning because a section below may update button_counter for autoplay
-				prev_button_counter = button_counter;
-				
-				switch (button_counter) {
-					//pulse demo
-					case 1: setPulseTimer(&pulse1, 858); pulse1.duty = 0; pulse1.volume = 15; break;
-					case 2: setPulseTimer(&pulse1, 764); pulse1.duty = 1; pulse1.volume = 14; break; 
-					case 3: setPulseTimer(&pulse1, 681); pulse1.duty = 2; pulse1.volume = 12; break; 
-					case 4: setPulseTimer(&pulse1, 642); pulse1.duty = 3; pulse1.volume = 11; break; 
-					case 5: setPulseTimer(&pulse1, 573); pulse1.duty = 2; pulse1.volume = 9; break; 
-					case 6: setPulseTimer(&pulse1, 510); pulse1.duty = 1; pulse1.volume = 8; break; 
-					case 7: setPulseTimer(&pulse1, 454); pulse1.duty = 0; pulse1.volume = 6; break; 
-					case 8: setPulseTimer(&pulse1, 428); pulse1.duty = 2; pulse1.volume = 1; break;
-					case 9: pulse1.volume = 0; break;
-
-					//triangle demo
-					case 10: setTriangleTimer(&triangle, 429); break;
-					case 11: setTriangleTimer(&triangle, 382); break; 
-					case 12: setTriangleTimer(&triangle, 341); break; 
-					case 13: setTriangleTimer(&triangle, 321); break; 
-					case 14: setTriangleTimer(&triangle, 287); break; 
-					case 15: setTriangleTimer(&triangle, 255); break; 
-					case 16: setTriangleTimer(&triangle, 227); break;
-					case 17: setTriangleTimer(&triangle, 0); break;
-				
-					//noise demo
-					case 18: noise.volume = 15; noise.period_index = 15; break; 
-					case 19: noise.volume = 14; noise.period_index = 13; break; 
-					case 20: noise.volume = 13; noise.period_index = 11; break; 
-					case 21: noise.volume = 12; noise.period_index = 9; break; 
-					case 22: noise.volume = 11; noise.period_index = 7; break; 
-					case 23: noise.volume = 10; noise.period_index = 5; break;
-					case 24: noise.volume = 0; break;
-					
-					//mixing demo
-					case 25:
-						setPulseTimer(&pulse1, 573); pulse1.duty = 0; pulse1.volume = 15;
-						setPulseTimer(&pulse2, 214); pulse2.duty = 2; pulse2.volume = 10;
-						setTriangleTimer(&triangle, 429);
-						noise.volume = 7; noise.period_index = 11;
-						break;
-				
-					default: break;
-				}
-				//TODO these should be called when respective channels are updated
-				updatePulse(&pulse1);
-				updatePulse(&pulse2);
-				updateTriangle(&triangle);
-				updateNoise(&noise);
-			}*/
+			//update
+			wav_counter = (wav_counter + 1) % 4;
 			
 		}
 		
@@ -411,9 +354,15 @@ int main(void)
 		
 		//LED thread
 		static uint32_t last_led_ticks = 0;
-		if (HAL_GetTick() - last_led_ticks >= (button_counter == -1 ? 50 : 100 * (4 - (button_counter % 4)))) {
+		if (HAL_GetTick() - last_led_ticks >= (100 * (4 - (button_counter % 4)))) {
 			last_led_ticks = HAL_GetTick();
 			HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+		}
+		static uint32_t last_led2_ticks = 0;
+		if (HAL_GetTick() - last_led2_ticks >= 10) {	
+			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, (GPIO_PinState)(!(led_bug & 0x01)));
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, (GPIO_PinState)(!(led_bug & 0x02)));
+			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, (GPIO_PinState)(!(led_bug & 0x04)));
 		}
 		
 		//button thread
@@ -423,6 +372,8 @@ int main(void)
 			if (!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) && !SW1_pressed) {
 				SW1_pressed = 1;
 				button_counter += 1;
+				//TODO
+				initSong(button_counter % 18);
 			}
 			else if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) && SW1_pressed) {
 				SW1_pressed = 0;
@@ -533,7 +484,7 @@ static void MX_TIM6_Init(void)
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 0;
   htim6.Init.CounterMode = TIM_COUNTERMODE_UP;
-  htim6.Init.Period = 93;
+  htim6.Init.Period = (47 * TIMER_RATE) - 1;
   htim6.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_DISABLE;
   if (HAL_TIM_Base_Init(&htim6) != HAL_OK)
   {

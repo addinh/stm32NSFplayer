@@ -63,19 +63,19 @@ typedef void (*WriteProc)(WORD,BYTE);
 	/*
 	 *	Memory
 	 */
-	BYTE		pRAM[0x0800];			//RAM:		0x0000 - 0x07FF
-	BYTE		pSRAM[0x2000];			//SRAM:		0x6000 - 0x7FFF (non-FDS only)
+static BYTE		pRAM[0x0800];			//RAM:		0x0000 - 0x07FF
+static	BYTE		pSRAM[0x2000];			//SRAM:		0x6000 - 0x7FFF (non-FDS only)
 
-	BYTE		pAPU[0x0020];			//APU:		0x4000 - 0x4017
+//static	BYTE		pAPU[0x0020];			//APU:		0x4000 - 0x4017
 
-	BYTE		pExRAM[0x1000];			//ExRAM:	0x5C00 - 0x5FF5 (MMC5 only)
+static	BYTE		pExRAM[0x1000];			//ExRAM:	0x5C00 - 0x5FF5 (MMC5 only)
 								// Also holds NSF player info (at 0x5000 - 0x500F)
-	BYTE		pROM_Full[0x8000];		//Full ROM buffer
+static	BYTE		pROM_Full[0x8000];		//Full ROM buffer
 
-	BYTE*		pROM[10];		//ROM banks (point to areas in pROM_Full)
+static	BYTE*		pROM[10];		//ROM banks (point to areas in pROM_Full)
 								//0x8000 - 0xFFFF
 								//also includes 0x6000 - 0x7FFF (FDS only)
-	BYTE*		pStack;			//the stack (points to areas in pRAM)
+static	BYTE*		pStack;			//the stack (points to areas in pRAM)
 								//0x0100 - 0x01FF
 
 //	int			nROMSize;		//size of this ROM file in bytes
@@ -86,22 +86,22 @@ typedef void (*WriteProc)(WORD,BYTE);
 	 *	Memory Proc Pointers
 	 */
 
-	ReadProc	ReadMemory[0x10];
-	WriteProc	WriteMemory[0x10];
+static	ReadProc	ReadMemory[0x10];
+static	WriteProc	WriteMemory[0x10];
 
 	/*
 	 *	6502 Registers / Mode
 	 */
 
-	BYTE		regA;			// Accumulator
-	BYTE		regX;			// X-Index
-	BYTE		regY;			// Y-Index
-	BYTE		regP;			// Processor Status
-	BYTE		regSP;			// Stack Pointer
-	WORD		regPC;			// Program Counter
+static	BYTE		regA;			// Accumulator
+static	BYTE		regX;			// X-Index
+static	BYTE		regY;			// Y-Index
+static	BYTE		regP;			// Processor Status
+static	BYTE		regSP;			// Stack Pointer
+static	WORD		regPC;			// Program Counter
 
-	BYTE		bPALMode;		// 1 if in PAL emulation mode, 0 if in NTSC
-	BYTE		bCPUJammed;		// 0 = not jammed.  1 = really jammed.  2 = 'fake' jammed
+static	BYTE		bPALMode;		// 1 if in PAL emulation mode, 0 if in NTSC
+static	BYTE		bCPUJammed;		// 0 = not jammed.  1 = really jammed.  2 = 'fake' jammed
 								//  fake jam caused by the NSF code to signal the end of the play/init routine
 
 
@@ -146,8 +146,8 @@ typedef void (*WriteProc)(WORD,BYTE);
 //	float		fTicksPerSample;		//clock cycles between generated samples
 //	float		fTicksUntilNextSample;	//clocks until the next sample
 
-	UINT		nCPUCycle;
-	UINT		nAPUCycle;
+static	UINT		nCPUCycle;
+static	UINT		nAPUCycle;
 //	UINT		nTotalPlays;			//number of times the play subroutine has been called (for tracking output time)
 
 
@@ -197,12 +197,12 @@ typedef void (*WriteProc)(WORD,BYTE);
 //	int			nInvertCutoffHz;
 //	BYTE		bIgnore4011Writes;
 
-	BYTE		bIgnoreBRK;
-	BYTE		bIgnoreIllegalOps;
-	BYTE		bNoWaitForReturn;
-	BYTE		bPALPreference;
-	BYTE		bCleanAXY;
-	BYTE		bResetDuty;
+static	BYTE		bIgnoreBRK;
+static	BYTE		bIgnoreIllegalOps;
+//static	BYTE		bNoWaitForReturn;
+//static	BYTE		bPALPreference;
+//static	BYTE		bCleanAXY;
+//static	BYTE		bResetDuty;
 
 //	/*
 //	 *	Sound Filter
@@ -559,10 +559,10 @@ N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_FLAG,N_F
 //
 //
 
-TWIN front;
-TWIN final;
-BYTE val;
-BYTE op;
+static TWIN front;
+static TWIN final;
+static BYTE val;
+static BYTE op;
 
 static UINT emulate6502(UINT runto)
 {
@@ -589,8 +589,7 @@ static UINT emulate6502(UINT runto)
 
 	while(nCPUCycle < runto)
 	{
-		extern uint8_t op_debug;
-		op_debug = op = Rd(PC.W);
+		op = Rd(PC.W);
 		PC.W++;
 
 		nCPUCycle += CPU_Cycles[op];
@@ -1062,7 +1061,7 @@ jammed:
 static BYTE 		ReadMemory_RAM(WORD a)				{ return pRAM[a & 0x07FF]; }
 static BYTE 		ReadMemory_ExRAM(WORD a)			{ return pExRAM[a & 0x0FFF]; }
 static BYTE 		ReadMemory_SRAM(WORD a)				{ return pSRAM[a & 0x1FFF]; }
-static BYTE 		ReadMemory_pAPU(WORD a)				{ return pAPU[a & 0x001F]; } //TODO read from wave structs
+BYTE 		ReadMemory_pAPU(WORD a);//				{ return pAPU[a & 0x001F]; } //TODO read from wave structs
 static BYTE 		ReadMemory_ROM(WORD a)				{ return pROM[(a >> 12) - 6][a & 0x0FFF]; }
 static BYTE 		ReadMemory_Default(WORD a)			{ return (a >> 8); }
 
@@ -1070,7 +1069,7 @@ static BYTE 		ReadMemory_Default(WORD a)			{ return (a >> 8); }
 static void 		WriteMemory_RAM(WORD a,BYTE v)		{ pRAM[a & 0x07FF] = v; }
 static void 		WriteMemory_ExRAM(WORD a,BYTE v)	{ pExRAM[a & 0x0FFF] = v; } //TODO bank switching stuff
 static void 		WriteMemory_SRAM(WORD a,BYTE v)		{ pSRAM[a & 0x1FFF] = v; }
-static void 		WriteMemory_pAPU(WORD a,BYTE v)		{ pAPU[a & 0x001F] = v; } //TODO write to wave structs
+void 		WriteMemory_pAPU(WORD a,BYTE v);//	{ pAPU[a & 0x001F] = v; } //TODO write to wave structs
 static void 		WriteMemory_Default(WORD a,BYTE v)	{ }
 
 
