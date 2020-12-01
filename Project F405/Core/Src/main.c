@@ -120,6 +120,7 @@ static void MX_SDIO_SD_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
 FRESULT scan_files (char* path);
+void scan_nsf_file(void);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -337,6 +338,13 @@ void SW5_pressed_callback(void) {
 	initSong(song_select);
 }
 void SW6_pressed_callback(void) {
+	if (!song_loaded)
+		scan_nsf_file();
+	else
+		song_loaded=0;
+}
+
+void SW4_pressed_callback(void) {
 	//load_NSF_data();
 }
 
@@ -390,86 +398,11 @@ int main(void)
 	//TFT init and sd card mount and get the file name
 	tft_init(PIN_ON_TOP, WHITE, BLACK, RED, GREEN);
 	char buff[256];
-	HAL_Delay(1000);
+	//HAL_Delay(1000);
 	f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
 	strcpy(buff, "/");	
 	res = scan_files(buff);
 	
-	//testing for now, reading once
-	tft_printc(0, 5, file_name_list[0]);
-	tft_printc(0, 6, file_name_list[1]);
-	tft_printc(0, 7, file_name_list[2]);
-	f_open(&SDFile, file_name_list[2],  FA_READ);
-		int file_byte = f_size(&SDFile);
-		memset(file.text,0,sizeof(file.text));
-		res = f_read(&SDFile, file.text, 128, (UINT*)&bytesread);
-		if((bytesread == 0) || (res != FR_OK))
-		{
-			char buffer[40];
-			tft_prints(0, 0, "Read no ok",2);
-			//sprintf(buffer,"Read file Failed");
-			//LCD_DrawString(20,6,buffer);
-		}
-		else 
-		{
-			char buffer[strlen("Read Successfully")];
-			tft_prints(0, 0, "Read ok",2);
-		}
-		tft_prints(0, 11, "%d",file_byte);
-		memset(pROM_Full,0,0x8000);
-		int file_byte_left = file_byte-128;
-		int count_time =0;
-		int idx = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
-		while(file_byte_left>0){
-			if(file_byte_left>=4096){
-				uint8_t part_byte[4096];
-				res = f_read(&SDFile, part_byte, 4096, (UINT*)&bytesread);
-				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, 4096*sizeof(uint8_t));
-				for (uint32_t i=0; i<4096; ++i) {
-					pROM_Full[idx - 0x8000 +file_byte-128-file_byte_left+i] = part_byte[i];
-	      }
-				file_byte_left = file_byte_left-4096;
-				if(f_eof(&SDFile)){
-					tft_prints(0, 12, "eof error!");
-				}
-				else{
-					count_time = count_time +1;
-					tft_prints(0, 12, "%d",count_time);
-				}
-			}
-			else{
-				uint8_t part_byte[file_byte_left];
-				res = f_read(&SDFile, part_byte, file_byte_left, (UINT*)&bytesread);
-				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, file_byte_left*sizeof(uint8_t));
-				for (uint32_t i=0; i<file_byte_left; ++i) {
-					pROM_Full[idx - 0x8000+file_byte-128-file_byte_left+i] = part_byte[i];
-	      }
-				file_byte_left = file_byte_left-file_byte_left;
-			}
-			
-		}
-		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
-		if(!f_eof(&SDFile))
-			tft_prints(0, 14, "Not eof!");
-		if((bytesread == 0) || (res != FR_OK))
-		{
-			tft_prints(0, 15, "Read no ok",2);
-		}
-		else 
-		{
-			tft_prints(0, 15, "%d",file_byte);
-		}
-		f_close(&SDFile);
-//		uint16_t init_addr = (int16_t)file.format.init_address_orgin[1]<<8 | file.format.init_address_orgin[0];
-//		uint16_t play_addr = (int16_t)file.format.play_address_orgin[1]<<8 | file.format.play_address_orgin[0];
-//		int load_address = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
-//		tft_prints(0, 16, "%x",init_addr);
-//		tft_prints(0, 17, "%x",play_addr);
-//		tft_prints(0, 18, "%x",load_address);
-		tft_prints(0, 16, "%d",pROM_Full[idx - 0x8000]);
-		tft_prints(0, 17, "%d",pROM_Full[idx - 0x8000+file_byte-128]);
-		tft_update(0);
-	load_NSF_data(file);
   while (1)
   {
     /* USER CODE END WHILE */
@@ -657,7 +590,7 @@ static void MX_SDIO_SD_Init(void)
   hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
   hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
   hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd.Init.ClockDiv = 0;
+  hsd.Init.ClockDiv = 20;
   /* USER CODE BEGIN SDIO_Init 2 */
 
   /* USER CODE END SDIO_Init 2 */
@@ -846,18 +779,63 @@ FRESULT scan_files (char* path)
                 if (res != FR_OK) break;
                 path[i] = 0;
             } else {                                       /* It is a file. */
-								
-								//char buffer[40];
 							  sprintf(file_name_list[count],"%s",fno.fname);
 							count = count +1;
-							//tft_printc(0,5+count,file_name_list[count]);
-							//tft_prints(0,9,"%d",count);
             }
         }
         f_closedir(&dir);
     }
 
     return res;
+}
+
+void scan_nsf_file(void){
+	f_open(&SDFile, file_name_list[1],  FA_READ);
+		int file_byte = f_size(&SDFile);
+		memset(file.text,0,sizeof(file.text));
+		res = f_read(&SDFile, file.text, 128, (UINT*)&bytesread);
+		if((bytesread == 0) || (res != FR_OK))
+		{
+			tft_prints(0, 16, "Read no ok",2);
+		}
+		else 
+		{
+			char buffer[strlen("Read Successfully")];
+			tft_prints(0, 16, "Read ok",2);
+		}
+		tft_prints(0, 17, "%d",file_byte);
+		memset(pROM_Full,0,0x8000);
+		int file_byte_left = file_byte-128;
+		int idx = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
+		while(file_byte_left>0){
+			if(file_byte_left>=4096){
+				uint8_t part_byte[4096];
+				res = f_read(&SDFile, part_byte, 4096, (UINT*)&bytesread);
+				for (uint32_t i=0; i<4096; ++i) {
+					pROM_Full[idx - 0x8000 +file_byte-128-file_byte_left+i] = part_byte[i];
+	      }
+				file_byte_left = file_byte_left-4096;
+				if(f_eof(&SDFile)){
+					tft_prints(0, 18, "eof error!");
+				}
+			}
+			else{
+				uint8_t part_byte[file_byte_left];
+				res = f_read(&SDFile, part_byte, file_byte_left, (UINT*)&bytesread);
+				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, file_byte_left*sizeof(uint8_t));
+				for (uint32_t i=0; i<file_byte_left; ++i) {
+					pROM_Full[idx - 0x8000+file_byte-128-file_byte_left+i] = part_byte[i];
+	      }
+				file_byte_left = file_byte_left-file_byte_left;
+			}
+			
+		}
+		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
+		if(!f_eof(&SDFile))
+			tft_prints(0, 19, "Not eof!");
+		f_close(&SDFile);
+		tft_update(0);
+	  load_NSF_data(file);
 }
 /* USER CODE END 4 */
 

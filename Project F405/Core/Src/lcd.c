@@ -10,6 +10,7 @@
 
 extern TFTBuffer_STRUCT default_tft_screens;
 extern TFTBuffer tft_screens;
+TFT_Select_list selected =0;
 
 //private data
 uint16_t curr_bg_color = BLACK;
@@ -531,4 +532,14 @@ uint8_t tft_update2(uint32_t period) {
             } else return 1;
     }
     return 1;
+}
+
+void custom_tft_prints(uint8_t x, uint8_t y, TFT_Select_list num, const char *fmt,...){
+				if(selected == num){
+					tft_set_text_color(RED);
+					tft_prints(x, y, fmt);
+					tft_set_text_color(BLACK);
+				}
+				else
+					 tft_prints(x, y, fmt);
 }

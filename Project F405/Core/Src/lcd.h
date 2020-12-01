@@ -21,6 +21,20 @@ typedef enum {
     PIN_ON_RIGHT
 } TFT_ORIENTATION;
 
+typedef enum {
+    SONG_1 = 1,
+		SONG_2,
+		SONG_3,
+		SONG_4,
+		SONG_5,
+		SONG_6,
+		SONG_7,
+		SONG_8,
+		SONG_9,
+		SONG_10,
+} TFT_Select_list;
+
+extern TFT_Select_list selected;
 /* GPIO settings */
 
 /* Colors */
@@ -181,5 +195,7 @@ void tft_printf(uint8_t x, uint8_t y, float num, uint32_t dp);
 uint8_t tft_update(uint32_t period);
 
 uint8_t tft_update2(uint32_t period);
+
+void custom_tft_prints(uint8_t x, uint8_t y, TFT_Select_list num, const char *fmt,...);
 
 #endif        /* __LCD_MAIN_H */
