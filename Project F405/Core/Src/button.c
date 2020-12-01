@@ -10,11 +10,12 @@ ButtonStruct SW7 = {GPIOB, GPIO_PIN_8};
 //when a callback is defined in main, extern here and add to init
 extern void SW5_pressed_callback(void);
 extern void SW6_pressed_callback(void);
-
+extern void SW4_pressed_callback(void);
 /**
 	* Init button callbacks
 	*/
 void initButtons(void) {
+	SW4.pressed_callback = SW4_pressed_callback;
 	SW5.pressed_callback = SW5_pressed_callback;
 	SW6.pressed_callback = SW6_pressed_callback;
 }
