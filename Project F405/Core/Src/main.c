@@ -35,8 +35,6 @@
 //Tony's include library
 #include "lcd.h"
 #include "nsf.h"
-#include <stdio.h>
-#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -340,8 +338,11 @@ void SW5_pressed_callback(void) {
 void SW6_pressed_callback(void) {
 	if (!song_loaded)
 		scan_nsf_file();
-	else
+	else{
 		song_loaded=0;
+		memset(DAC_BUFFER,0,DAC_BUFFER_LEN);
+		tft_update(0);
+	}
 }
 
 void SW4_pressed_callback(void) {
@@ -790,19 +791,24 @@ FRESULT scan_files (char* path)
 }
 
 void scan_nsf_file(void){
-	f_open(&SDFile, file_name_list[1],  FA_READ);
+		f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+		HAL_Delay(50);
+	  res =f_open(&SDFile, file_name_list[1],  FA_READ);
+		if(res != FR_OK)
+			tft_prints(0, 15, "%d",res);
 		int file_byte = f_size(&SDFile);
-		memset(file.text,0,sizeof(file.text));
+		memset(file.text,0,128);
 		res = f_read(&SDFile, file.text, 128, (UINT*)&bytesread);
 		if((bytesread == 0) || (res != FR_OK))
 		{
-			tft_prints(0, 16, "Read no ok",2);
+			tft_prints(0, 16, "%d",res);
 		}
 		else 
 		{
 			char buffer[strlen("Read Successfully")];
 			tft_prints(0, 16, "Read ok",2);
 		}
+		tft_update(0);
 		tft_prints(0, 17, "%d",file_byte);
 		memset(pROM_Full,0,0x8000);
 		int file_byte_left = file_byte-128;
@@ -833,8 +839,10 @@ void scan_nsf_file(void){
 		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
 		if(!f_eof(&SDFile))
 			tft_prints(0, 19, "Not eof!");
+		f_rewind(&SDFile);
 		f_close(&SDFile);
 		tft_update(0);
+		f_mount(0, "",0);
 	  load_NSF_data(file);
 }
 /* USER CODE END 4 */
