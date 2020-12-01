@@ -77,6 +77,7 @@ void Error_Handler(void);
 #define Button6_Pin GPIO_PIN_8
 #define Button6_GPIO_Port GPIOB
 
+/* USER CODE BEGIN Private defines */
 //Tony's defines for TFT
 extern SPI_HandleTypeDef hspi1;
 #define TFT_SPI (hspi1)
@@ -90,8 +91,6 @@ extern SPI_HandleTypeDef hspi1;
 #define TFT_SDA_GPIO_Port GPIOA
 #define TFT_RES_Pin GPIO_PIN_3
 #define TFT_RES_GPIO_Port GPIOA
-/* USER CODE BEGIN Private defines */
-
 /* USER CODE END Private defines */
 
 #ifdef __cplusplus

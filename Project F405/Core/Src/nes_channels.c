@@ -4,7 +4,7 @@
 //additional scaling per channel
 #define PULSE_MIX_SCALE 			1.0f
 #define TRIANGLE_MIX_SCALE 		1.0f
-#define NOISE_MIX_SCALE 			0.5f
+#define NOISE_MIX_SCALE 			0.4f
 
 //buffer for unused pAPU registers just in case (DMC)
 uint8_t pAPU_unused[0x20] = {0};
@@ -109,18 +109,24 @@ uint8_t PULSE_LOOKUP[4][8] = {
 };
 void updatePulse(PulseChannel *pulse, uint8_t reg_num) {
 	//length counter update only if 4th register is updated
-	if (reg_num == 3) {
+	if (reg_num == 4 - 1) {
 		if (pulse->wave.enable)
 			pulse->wave.length_counter = LENGTH_COUNTER_LOOKUP[pulse->length_counter];
 		else 
 			pulse->wave.length_counter = 0;
 	}
 	
+	//if constant volume, set default volume as input volume
+	if (pulse->const_volume_flag) pulse->wave.volume = pulse->volume;
+	//else, set volume to 15 (if 4th register is updated)
+	else if (reg_num == 4-1) pulse->wave.volume = 15;
+	
 	//timer -> period
 	// f = CPU / (16 * (t + 1))
-	pulse->wave.period = TIMER_DOUBLE_SCALER * (((uint16_t)pulse->timer_hi << 8) + pulse->timer_lo + 1);
-	if (pulse->wave.period < 9 * TIMER_DOUBLE_SCALER) {
-		pulse->wave.amplitude = 0;
+	//due to sweep, only update if 3rd or 4th registers are updated
+	if (reg_num == 3 - 1 || reg_num == 4 - 1) {
+		pulse->wave.period = TIMER_DOUBLE_SCALER * (((uint16_t)pulse->timer_hi << 8) + pulse->timer_lo + 1);
+		checkMutedPulse(pulse);
 	}
 	
 	//counter check
@@ -132,10 +138,45 @@ void setPulseTimer(PulseChannel *pulse, uint16_t timer) {
 	pulse->timer_hi = (uint8_t)((timer >> 8) & 0x07);
 }
 
+//helper for doing sweep, returns the target period
+uint16_t doSweep(uint16_t period, uint8_t shift, uint8_t negate, uint8_t complement) {
+	uint16_t shifted = period >> shift;
+	if (negate) {
+		return period - shifted - complement;
+	}
+	else {
+		return period + shifted;
+	}
+}
+
+void checkMutedPulse(PulseChannel *pulse) {
+	//if period is 8 or less, mute the channel
+	if (pulse->wave.period <= 8 * TIMER_DOUBLE_SCALER) {
+		pulse->wave.muted = 1;
+	}
+	//if sweeping will cause pulse period too high, also mute
+	if (pulse->sweep_enable) {
+		uint16_t target = doSweep(pulse->wave.period, pulse->sweep_shift, pulse->sweep_negate, pulse->sweep_complement);
+		if (target > 0x7FF) pulse->wave.muted = 1;
+	}
+	//otherwise fine
+	pulse->wave.muted = 0;
+}
+
 void clockPulse(PulseChannel *pulse, uint8_t step) {
-	//envelope && linear counter
+	//envelope
 	if (CLOCK_LOOKUP[frameCounter.mode][0][step]) {
-		//TODO
+		if (!pulse->const_volume_flag) {
+			pulse->wave.envelope_counter = (pulse->wave.envelope_counter + 1) % pulse->volume; //also envelope reload
+			if (pulse->wave.envelope_counter == 0) {
+				if (pulse->wave.volume > 0) {
+					--pulse->wave.volume;
+				}
+				else if (pulse->wave.volume == 0 && pulse->length_counter_halt) { //also loop flag
+					pulse->wave.volume = 15;
+				}
+			}
+		}
 	}
 	
 	//length counter && sweep unit
@@ -145,34 +186,56 @@ void clockPulse(PulseChannel *pulse, uint8_t step) {
 			--pulse->wave.length_counter;
 		}
 		//sweep
-		//TODO
+		if (pulse->sweep_enable) {
+			//safety check
+			uint8_t sweep_period = pulse->sweep_period == 0 ? 1 : pulse->sweep_period;
+			pulse->wave.sweep_counter = (pulse->wave.sweep_counter + 1) % sweep_period;
+			if (pulse->wave.sweep_counter == 0) {
+				pulse->wave.period = doSweep(pulse->wave.period, pulse->sweep_shift, pulse->sweep_negate, pulse->sweep_complement);
+				checkMutedPulse(pulse);
+			}
+		}
 	}
 }
 
 void readPulse(uint8_t* buffer, const uint16_t buffer_len, PulseChannel* pulse) {
-	if (pulse->wave.period == 0) {
+	if (pulse->wave.period == 0 || pulse->channel_muted) {
 		//channel not fully initialized
 		return;
 	}
 	
 	//UPDATE AMPLITUDE BEFORE FEEDING TO BUFFER
-	if (pulse->wave.enable && pulse->wave.length_counter)
-		pulse->wave.amplitude = (uint8_t)(pulse->volume * PULSE_MIX_SCALE);
-	else
-		pulse->wave.amplitude = 0;
+	if (!(pulse->wave.enable && pulse->wave.length_counter && !pulse->wave.muted))
+		return;
+	pulse->wave.amplitude = (uint8_t)(pulse->wave.volume * PULSE_MIX_SCALE);
 	
-	for (uint16_t i = 0; i < buffer_len; ++i) {
-		if (PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter]) {
-			//REMEMBER TO RESET BUFFER TO 0
-			buffer[i] += pulse->wave.amplitude;
+	for (uint16_t i = 0; i < buffer_len;) {
+		int count = (pulse->wave.period - pulse->wave.counter + TIMER_HALF_PRESCALER-1) / TIMER_HALF_PRESCALER;
+		if (count > (buffer_len-i)) {
+			count = buffer_len-i;
 		}
-		
-		//every 2*[period] CPU cycles, [pulse_counter] goes up by 1
-		pulse->wave.counter = (pulse->wave.counter + TIMER_HALF_PRESCALER) % pulse->wave.period;
-		if (pulse->wave.counter < TIMER_HALF_PRESCALER) {
+		fastmemset(&buffer[i], PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter] ? pulse->wave.amplitude : 0, count);
+		i+= count;
+		pulse->wave.counter = pulse->wave.counter + count*TIMER_HALF_PRESCALER;
+		if (pulse->wave.counter >= pulse->wave.period) {
+			pulse->wave.counter -= pulse->wave.period;
 			pulse->wave.pulse_counter = (pulse->wave.pulse_counter + 1) % 8;
 		}
 	}
+	
+//	#pragma unroll 16
+//	for (uint16_t i = 0; i < buffer_len; ++i) {
+//		if (PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter]) {
+//			//REMEMBER TO RESET BUFFER TO 0
+//			buffer[i] += pulse->wave.amplitude;
+//		}
+//		
+//		//every 2*[period] CPU cycles, [pulse_counter] goes up by 1
+//		pulse->wave.counter = (pulse->wave.counter + TIMER_HALF_PRESCALER) % pulse->wave.period;
+//		if (pulse->wave.counter < TIMER_HALF_PRESCALER) {
+//			pulse->wave.pulse_counter = (pulse->wave.pulse_counter + 1) % 8;
+//		}
+//	}
 }
 
 
@@ -181,15 +244,15 @@ void readPulse(uint8_t* buffer, const uint16_t buffer_len, PulseChannel* pulse) 
 //==========================================//
 void updateTriangle(TriangleChannel *tri, uint8_t reg_num) {
 	//length counter update only if 4th register is updated
-	if (reg_num == 3) {
+	if (reg_num == 4 - 1) {
 		if (tri->wave.enable)
 			tri->wave.length_counter = LENGTH_COUNTER_LOOKUP[tri->length_counter];
 		else 
 			tri->wave.length_counter = 0;
 	}
 	
-	//linear counter update only if 4th register is updated ?
-	if (reg_num == 3) {
+	//linear counter update only if 4th register is updated
+	if (reg_num == 4 - 1) {
 		tri->wave.linear_counter_flag = 1;
 	}
 	
@@ -216,15 +279,12 @@ void initTriangleLookup(void) {
 }
 
 void clockTriangle(TriangleChannel *tri, uint8_t step) {
-	//envelope && linear counter
+	//linear counter
 	if (CLOCK_LOOKUP[frameCounter.mode][0][step]) {
-		//linear counter
 		if (tri->wave.linear_counter_flag) tri->wave.linear_counter = tri->counter_reload;
 		else if (tri->wave.linear_counter > 0) --tri->wave.linear_counter;
 		
 		if (!tri->counter_flag) tri->wave.linear_counter_flag = 0;
-		//envelope
-		//TODO
 	}
 	
 	//length counter
@@ -237,28 +297,41 @@ void clockTriangle(TriangleChannel *tri, uint8_t step) {
 }
 
 void readTriangle(uint8_t* buffer, const uint16_t buffer_len, TriangleChannel* tri) {
-	if (tri->wave.period == 0 || tri->wave.period == 1) {
+	if (tri->wave.period == 0 || tri->wave.period == 1 || tri->channel_muted) {
 		//channel not fully initialized
 		return;
 	}
 	
 	//UPDATE AMPLITUDE BEFORE FEEDING TO BUFFER
-	if (tri->wave.enable && tri->wave.length_counter && tri->wave.linear_counter)
-		tri->wave.amplitude_env = 1;
-	else
-		tri->wave.amplitude_env = 0;
+	//
+	if (!(tri->wave.enable && tri->wave.length_counter && tri->wave.linear_counter))
+		return;
 	
-	for (uint16_t i = 0; i < buffer_len; ++i) {
-		const uint8_t amplitude = TRIANGLE_LOOKUP[tri->wave.amplitude_counter] * tri->wave.amplitude_env;
-		//REMEMBER TO RESET BUFFER TO 0
-		buffer[i] += amplitude;
-		
-		//every [period] CPU cycles, [amplitude_counter] goes up by 1
-		tri->wave.counter = (tri->wave.counter + TIMER_PRESCALER) % tri->wave.period;
-		if (tri->wave.counter < TIMER_PRESCALER) {
+	for (uint16_t i = 0; i < buffer_len;) {
+		int count = (tri->wave.period - tri->wave.counter + TIMER_PRESCALER-1)/TIMER_PRESCALER;
+		if (count > (buffer_len-i)) {
+			count = buffer_len-i;
+		}
+		fastmemset(&buffer[i], TRIANGLE_LOOKUP[tri->wave.amplitude_counter], count);
+		i+= count;
+		tri->wave.counter = tri->wave.counter + count*TIMER_PRESCALER;
+		if (tri->wave.counter >= tri->wave.period) {
+			tri->wave.counter -= tri->wave.period;
 			tri->wave.amplitude_counter = (tri->wave.amplitude_counter + 1) % 32;
 		}
 	}
+	
+//	#pragma unroll 16
+//	for (uint16_t i = 0; i < buffer_len; ++i) {
+//		//REMEMBER TO RESET BUFFER TO 0
+//		buffer[i] += TRIANGLE_LOOKUP[tri->wave.amplitude_counter];
+//		
+//		//every [period] CPU cycles, [amplitude_counter] goes up by 1
+//		tri->wave.counter = (tri->wave.counter + TIMER_PRESCALER) % tri->wave.period;
+//		if (tri->wave.counter < TIMER_PRESCALER) {
+//			tri->wave.amplitude_counter = (tri->wave.amplitude_counter + 1) % 32;
+//		}
+//	}
 }
 
 void setTriangleTimer(TriangleChannel *tri, uint16_t timer) {
@@ -275,12 +348,17 @@ const uint16_t NTSC_NOISE_PERIOD[] = {
 };
 void updateNoise(NoiseChannel *noisy, uint8_t reg_num) {
 	//length counter update only if 4th register is updated
-	if (reg_num == 3) {
+	if (reg_num == 4 - 1) {
 		if (noisy->wave.enable)
 			noisy->wave.length_counter = LENGTH_COUNTER_LOOKUP[noisy->length_counter];
 		else 
 			noisy->wave.length_counter = 0;
 	}
+	
+	//if constant volume, set default volume as input volume
+	if (noisy->const_volume_flag) noisy->wave.volume = noisy->volume;
+	//else, set volume to 15
+	else if (reg_num == 4-1) noisy->wave.volume = 15;
 	
 	//get period from lookup table
 	noisy->wave.period = TIMER_DOUBLE_SCALER * NTSC_NOISE_PERIOD[noisy->period_index];
@@ -290,9 +368,19 @@ void updateNoise(NoiseChannel *noisy, uint8_t reg_num) {
 }
 
 void clockNoise(NoiseChannel *noisy, uint8_t step) {
-	//envelope && linear counter
+	//envelope
 	if (CLOCK_LOOKUP[frameCounter.mode][0][step]) {
-		//TODO
+		if (!noisy->const_volume_flag) {
+			noisy->wave.envelope_counter = (noisy->wave.envelope_counter + 1) % noisy->volume; //also envelope reload
+			if (noisy->wave.envelope_counter == 0) {
+				if (noisy->wave.volume > 0) {
+					--noisy->wave.volume;
+				}
+				else if (noisy->wave.volume == 0 && noisy->length_counter_halt) { //also loop flag
+					noisy->wave.volume = 15;
+				}
+			}
+		}
 	}
 	
 	//length counter
@@ -306,7 +394,7 @@ void clockNoise(NoiseChannel *noisy, uint8_t step) {
 
 #define GET_BIT(X, BIT_POS) (((X) >> BIT_POS) & 0x01)   
 void readNoise(uint8_t* buffer, const uint16_t buffer_len, NoiseChannel* noisy) {
-	if (noisy->wave.period == 0) {
+	if (noisy->wave.period == 0 || noisy->channel_muted) {
 		//channel not fully initialized
 		return;
 	}
@@ -317,6 +405,7 @@ void readNoise(uint8_t* buffer, const uint16_t buffer_len, NoiseChannel* noisy) 
 	else
 		noisy->wave.amplitude = 0;
 	
+	#pragma unroll 16
 	for (uint16_t i = 0; i < buffer_len; ++i) {
 		if (GET_BIT(noisy->shift_register, 0) == 1) {
 			//REMEMBER TO RESET BUFFER TO 0

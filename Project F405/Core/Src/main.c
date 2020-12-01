@@ -29,7 +29,6 @@
 
 #include "nes_channels.h"
 #include "emulator6502.h"
-#include "nsf_array.h"
 #include "button.h"
 
 //Tony's include library
@@ -48,6 +47,10 @@
 #define LED2 GPIOC, GPIO_PIN_2
 #define LED3 GPIOC, GPIO_PIN_3
 
+#define SAFE_TESTING
+#ifdef SAFE_TESTING
+	#include "nsf_array.h"
+#endif
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -67,11 +70,12 @@ SPI_HandleTypeDef hspi1;
 DMA_HandleTypeDef hdma_spi1_rx;
 DMA_HandleTypeDef hdma_spi1_tx;
 
+TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN PV */
-#define DAC_BUFFER_LEN 256
-uint16_t DAC_BUFFER[DAC_BUFFER_LEN] = {0};
+#define DAC_BUFFER_LEN 2048
+uint16_t DAC_BUFFER[DAC_BUFFER_LEN + 16] = {0};
 
 //debug
 uint8_t song_loaded = 0;
@@ -79,13 +83,18 @@ uint8_t song_select = 0;
 uint8_t num_songs = 18;
 uint8_t led_bug = 0;
 
+volatile uint8_t update_flag = 0;
+//volatile uint8_t song_changing = 0;
+
 //NES channels
 PulseChannel pulse1 = {
 	.volume = 0,
+	.sweep_complement = 1,
 };
 	
 PulseChannel pulse2 = {
 	.volume = 0,
+	.sweep_complement = 0,
 };
 	
 TriangleChannel triangle = {
@@ -116,6 +125,7 @@ static void MX_DAC_Init(void);
 static void MX_TIM6_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_SPI1_Init(void);
+static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 FRESULT scan_files (char* path);
 void scan_nsf_file(void);
@@ -123,12 +133,13 @@ void scan_nsf_file(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define AUDIO_VOLUME 0.25f
+#define AUDIO_VOLUME 0.3f
 
 void mixAudio(uint16_t *buffer, uint8_t *mix_buffer, uint16_t len) {
 	//perform mixing on a buffer 4 times the length of (half) output to DAC buffer
 	//overall scaling done here
 	//note that len should be the length of the output buffer aka 1/4 length of buffer
+	#pragma unroll 8
 	for (uint16_t i = 0; i < len; ++i) {
 		#define p1 mix_buffer[i]
 		#define p2 mix_buffer[len + i]
@@ -148,14 +159,25 @@ void mixAudio(uint16_t *buffer, uint8_t *mix_buffer, uint16_t len) {
 	}
 }
 
+//helper for force mute/unmute all channels
+void forceMute(uint8_t muted) {
+	pulse1.channel_muted = muted;
+	pulse2.channel_muted = muted;
+	triangle.channel_muted = muted;
+	noise.channel_muted = muted;
+}	
+
 //going safe method here
 uint8_t mix_buffer[DAC_BUFFER_LEN * 4 / 2] = {0};
 
 // DMA INTERRUPTS
 void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
+	//if changing song, return
+	//if (song_changing) return;
+	
 	//create a temp array for mixing
 	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
-	memset(mix_buffer, 0, len * 4);
+	fastmemset(mix_buffer, 0, len * 4);
 	
 	//TODO can mute/unmute channels here
 	readPulse(&mix_buffer[0], len, &pulse1);
@@ -229,6 +251,11 @@ void initInstruction(void) {
 }
 
 void initSong(uint8_t song_num) {
+	//set flag
+	//__disable_irq();
+	//song_changing = 1;
+	//fastmemset(DAC_BUFFER, 0, DAC_BUFFER_LEN * 2);
+	
 	regPC = 0x5000;
 	regA = (song_num == 0 ? 1 : song_num) - 1; //safety again
 	regX = bPALMode;
@@ -269,6 +296,13 @@ void initSong(uint8_t song_num) {
 	//apparently songs can be switched without calling INIT instructions
 	//but let's just do what the wiki says
 	initInstruction();
+	
+	//reset muted status
+	forceMute(0);
+	
+	//reset flag
+	//song_changing = 0;
+	//__enable_irq();
 }
 
 
@@ -283,10 +317,12 @@ void load_ROM() {
 	//memset(pROM_Full, 0, 0x8000);
 	
 	//Comment out these lines and do your thing
-//	int idx = 0xbdc4;
-//	for (uint32_t i=0; i<16956; ++i) {
-//		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
-//	}
+	#ifdef SAFE_TESTING
+	int idx = 0xbdc4;
+	for (uint32_t i=0; i<16956; ++i) {
+		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
+	}
+	#endif
 	
 //	int idx = load_address;
 //	for (uint32_t i=0; i<file_byte; ++i) {
@@ -325,6 +361,12 @@ void load_NSF_data(nsf_file file) {
 // 	TONY IMPLEMENT ABOVE 	//
 //========================//
 
+//Frame Counter Timer
+void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
+	if (htim != &htim2) return;
+	update_flag = 1;
+}
+
 
 /**
 	* Define callbacks for buttons here
@@ -336,12 +378,25 @@ void SW5_pressed_callback(void) {
 	initSong(song_select);
 }
 void SW6_pressed_callback(void) {
-	if (!song_loaded)
-		scan_nsf_file();
+	if (!song_loaded) {
+		#ifdef SAFE_TESTING
+			load_ROM();
+			uint16_t init_addr = 0xbe34;
+			uint16_t play_addr = 0xf2d0;
+			initRAM(init_addr, play_addr);
+			song_select = 2;
+			num_songs = 18;
+			initSong(song_select);
+			song_loaded = 1;
+		#else
+			scan_nsf_file();
+		#endif
+	}
 	else{
 		song_loaded=0;
 		memset(DAC_BUFFER,0,DAC_BUFFER_LEN);
 		tft_update(0);
+		forceMute(1);
 	}
 }
 
@@ -386,6 +441,7 @@ int main(void)
   MX_SDIO_SD_Init();
   MX_SPI1_Init();
   MX_FATFS_Init();
+  MX_TIM2_Init();
   /* USER CODE BEGIN 2 */
 	initTriangleLookup();
 	initButtons();
@@ -393,6 +449,7 @@ int main(void)
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
+	HAL_TIM_Base_Start_IT(&htim2);
 	HAL_TIM_Base_Start(&htim6);
 	HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)DAC_BUFFER, DAC_BUFFER_LEN, DAC_ALIGN_12B_R);
@@ -415,68 +472,56 @@ int main(void)
 
 		//TODO update time = frame rate
 		//TODO trying at 250Hz
-		if (HAL_GetTick() - last_wav_ticks >= 4) {
+		if (HAL_GetTick() - last_wav_ticks >= 1) {
 			last_wav_ticks = HAL_GetTick();
 			
-			static uint8_t wav_counter = 0;
+			if (update_flag) {
+				static uint8_t wav_counter = 0;
 			
-			//do frame clocking at 240Hz
-			clockFrame();
+				//do frame clocking at 240Hz
+				clockFrame();
 			
-			//do next frame at 60 Hz
-			if (wav_counter == 0)
-			{
-				if(song_loaded && led_bug != 1) {
-					while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
-						//execute next instruction
-						emulate6502(nCPUCycle + 1);
-						if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-							led_bug = 1;
-							break;
+				//do next frame at 60 Hz
+				if (wav_counter == 0)
+				{
+					if(song_loaded && led_bug != 1) {
+						while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
+							//execute next instruction
+							emulate6502(nCPUCycle + 1);
+							if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
+								led_bug = 1;
+								break;
+							}
 						}
-					}
-					while (regPC != 0x5007) { //until PC finishes PLAY instructions
-						//execute next instruction
-						emulate6502(nCPUCycle + 1);
-						if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-							led_bug = 1;
-							break;
+						while (regPC != 0x5007) { //until PC finishes PLAY instructions
+							//execute next instruction
+							emulate6502(nCPUCycle + 1);
+							if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
+								led_bug = 1;
+								break;
+							}
 						}
 					}
 				}
+			
+				//update
+				wav_counter = (wav_counter + 1) % 4;
+			
+				//reset flag
+				update_flag = 0;
 			}
-			
-			//update
-			wav_counter = (wav_counter + 1) % 4;
-			
-		}
-		
-		//LCD thread
-		static uint32_t last_lcd_ticks = 0;
-		if (HAL_GetTick() - last_lcd_ticks >= 50) {
-			last_lcd_ticks = HAL_GetTick();
-			/*LCD_Clear(5 * WIDTH_EN_CHAR, 1 * HEIGHT_EN_CHAR, 5 * WIDTH_EN_CHAR, 3 * HEIGHT_EN_CHAR, BACKGROUND);
-
-			// print debug
-			print_int_with_label(1 * WIDTH_EN_CHAR, 1 * HEIGHT_EN_CHAR, "Ticks: ", 7, last_lcd_ticks, "%d");
-			//print_int_with_label(1 * WIDTH_EN_CHAR, 5 * HEIGHT_EN_CHAR, "p1_am: ", 7, pulse1.wave.amplitude, "%d");
-			//print_int_with_label(1 * WIDTH_EN_CHAR, 6 * HEIGHT_EN_CHAR, "p1_pe: ", 7, pulse1.wave.period, "%d");
-			//print_int_with_label(1 * WIDTH_EN_CHAR, 8 * HEIGHT_EN_CHAR, "p1_co: ", 7, pulse1.wave.counter, "%d");
-			print_int_with_label(1 * WIDTH_EN_CHAR, 2 * HEIGHT_EN_CHAR, "OUT: ", 5, HAL_DAC_GetValue(&hdac, DAC_CHANNEL_1), "%d");
-			print_int_with_label(1 * WIDTH_EN_CHAR, 3 * HEIGHT_EN_CHAR, "State: ", 7, button_counter, "%d");
-			//print_int_with_label(1 * WIDTH_EN_CHAR, 5 * HEIGHT_EN_CHAR, "debug: ", 7, dummy, "%d");*/
 		}
 		
 		//LED thread
 		static uint32_t last_led_ticks = 0;
 		if (HAL_GetTick() - last_led_ticks >= 250) {
 			last_led_ticks = HAL_GetTick();
-			HAL_GPIO_TogglePin(LED1);
+			HAL_GPIO_TogglePin(LED3);
 		}
 		static uint32_t last_led2_ticks = 0;
 		if (HAL_GetTick() - last_led2_ticks >= 10) {	
 			HAL_GPIO_WritePin(LED2, (GPIO_PinState)(!(led_bug & 0x01)));
-			HAL_GPIO_WritePin(LED3, (GPIO_PinState)(!(led_bug & 0x02)));
+			HAL_GPIO_WritePin(LED1, (GPIO_PinState)(!(led_bug & 0x02)));
 		}
 		
 		//button thread
@@ -591,7 +636,7 @@ static void MX_SDIO_SD_Init(void)
   hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
   hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
   hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd.Init.ClockDiv = 20;
+  hsd.Init.ClockDiv = 0;
   /* USER CODE BEGIN SDIO_Init 2 */
 
   /* USER CODE END SDIO_Init 2 */
@@ -633,6 +678,51 @@ static void MX_SPI1_Init(void)
   /* USER CODE BEGIN SPI1_Init 2 */
 
   /* USER CODE END SPI1_Init 2 */
+
+}
+
+/**
+  * @brief TIM2 Initialization Function
+  * @param None
+  * @retval None
+  */
+static void MX_TIM2_Init(void)
+{
+
+  /* USER CODE BEGIN TIM2_Init 0 */
+
+  /* USER CODE END TIM2_Init 0 */
+
+  TIM_ClockConfigTypeDef sClockSourceConfig = {0};
+  TIM_MasterConfigTypeDef sMasterConfig = {0};
+
+  /* USER CODE BEGIN TIM2_Init 1 */
+
+  /* USER CODE END TIM2_Init 1 */
+  htim2.Instance = TIM2;
+  htim2.Init.Prescaler = 0;
+  htim2.Init.CounterMode = TIM_COUNTERMODE_UP;
+  htim2.Init.Period = 349999;
+  htim2.Init.ClockDivision = TIM_CLOCKDIVISION_DIV1;
+  htim2.Init.AutoReloadPreload = TIM_AUTORELOAD_PRELOAD_ENABLE;
+  if (HAL_TIM_Base_Init(&htim2) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sClockSourceConfig.ClockSource = TIM_CLOCKSOURCE_INTERNAL;
+  if (HAL_TIM_ConfigClockSource(&htim2, &sClockSourceConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  sMasterConfig.MasterOutputTrigger = TIM_TRGO_RESET;
+  sMasterConfig.MasterSlaveMode = TIM_MASTERSLAVEMODE_DISABLE;
+  if (HAL_TIMEx_MasterConfigSynchronization(&htim2, &sMasterConfig) != HAL_OK)
+  {
+    Error_Handler();
+  }
+  /* USER CODE BEGIN TIM2_Init 2 */
+
+  /* USER CODE END TIM2_Init 2 */
 
 }
 

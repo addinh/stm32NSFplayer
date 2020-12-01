@@ -2,12 +2,23 @@
 #define __NES_CHANNELS_H
 
 #include "stdint.h"
+#include "stdio.h"
+#include "string.h"
 
 #pragma anon_unions
 
+__attribute__((always_inline)) void fastmemset(void* out, int fill, int amount) {
+	uint32_t* buf = out;
+	uint32_t bigfill = fill | fill<<8 | fill<<16 | fill<<24;
+	#pragma unroll 4
+	for (int i=amount; i != 0; i -= 4) {
+		*buf++ = bigfill;
+	}
+}
+
 //this is how slow the TIM6 channel is compared to the intended NTSC CPU freq (~1.8 MHz)
 //alternatively, this is how many NTSC CPU cycles have passed between each DAC sample
-#define TIMER_RATE 32		//16 seems to work but this to be safe for now
+#define TIMER_RATE 4		//2 works for playing 1 song, needs to solve INIT bottleneck [stuck in DMA IRQ loop???]
 #define TIMER_PRESCALER TIMER_RATE
 #define TIMER_HALF_PRESCALER (TIMER_RATE/2)
 #define TIMER_DOUBLE_SCALER (TIMER_RATE == 1 ? 2 : 1)
@@ -30,8 +41,8 @@ typedef struct {
 			uint8_t length_counter_halt : 1;
 			uint8_t duty : 2;
 			
-			uint8_t shift : 3;
-			uint8_t negate : 1;
+			uint8_t sweep_shift : 3;
+			uint8_t sweep_negate : 1;
 			uint8_t sweep_period : 3;
 			uint8_t sweep_enable : 1;
 			
@@ -47,12 +58,18 @@ typedef struct {
 	//wave generation
 	struct {
 		uint8_t enable;
+		uint8_t muted;
+		uint8_t volume;
 		uint16_t amplitude;
 		uint16_t period;
 		uint16_t counter;
 		uint16_t pulse_counter;
+		uint8_t envelope_counter;
+		uint8_t sweep_counter;
 		uint8_t length_counter;
 	} wave;
+	uint8_t sweep_complement;
+	uint8_t channel_muted;
 } PulseChannel;
 
 //2 pulse channel instances
@@ -60,6 +77,9 @@ extern PulseChannel pulse1, pulse2;
 
 //update the wave generation parameters according to registers
 inline void updatePulse(PulseChannel *pulse, uint8_t reg_num);
+
+//update muted status of channel (due to low period or sweep)
+inline void checkMutedPulse(PulseChannel *pulse);
 
 //update the wave generation parameters due to frame counter
 inline void clockPulse(PulseChannel *pulse, uint8_t step);
@@ -101,7 +121,6 @@ typedef struct {
 	//wave generation
 	struct {
 		uint8_t enable;
-		uint16_t amplitude_env;
 		uint16_t period;
 		uint16_t counter;
 		uint16_t amplitude_counter;
@@ -109,6 +128,7 @@ typedef struct {
 		uint8_t linear_counter;
 		uint8_t linear_counter_flag;
 	} wave;
+	uint8_t channel_muted;
 } TriangleChannel;
 
 //1 triangle channel instance
@@ -165,11 +185,14 @@ typedef struct {
 	//wave generation
 	struct {
 		uint8_t enable;
+		uint8_t volume;
 		uint16_t amplitude;
 		uint16_t period;
 		uint16_t counter;
+		uint8_t envelope_counter;
 		uint8_t length_counter;
 	} wave;
+	uint8_t channel_muted;
 } NoiseChannel;
 
 //1 noise channel instance
