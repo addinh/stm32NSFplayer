@@ -4,6 +4,7 @@
 "project f405\main.o"
 "project f405\stm32f4xx_it.o"
 "project f405\stm32f4xx_hal_msp.o"
+"project f405\button.o"
 "project f405\stm32f4xx_hal_dac.o"
 "project f405\stm32f4xx_hal_dac_ex.o"
 "project f405\stm32f4xx_hal_rcc.o"

@@ -38,3 +38,4 @@ project f405\main.o: C:\Keil_v5\ARM\ARMCC\Bin\..\include\stdlib.h
 project f405\main.o: ../Core/Src/nes_channels.h
 project f405\main.o: ../Core/Src/emulator6502.h
 project f405\main.o: ../Core/Src/nsf_array.h
+project f405\main.o: ../Core/Src/button.h

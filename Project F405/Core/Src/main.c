@@ -29,6 +29,7 @@
 #include "nes_channels.h"
 #include "emulator6502.h"
 #include "nsf_array.h"
+#include "button.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -38,6 +39,10 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define LED1 GPIOC, GPIO_PIN_1
+#define LED2 GPIOC, GPIO_PIN_2
+#define LED3 GPIOC, GPIO_PIN_3
+
 /* USER CODE END PD */
 
 /* Private macro -------------------------------------------------------------*/
@@ -56,9 +61,9 @@ TIM_HandleTypeDef htim6;
 uint16_t DAC_BUFFER[DAC_BUFFER_LEN] = {0};
 
 //debug
-//uint8_t dummy = 0;
-int16_t button_counter = 0;
-uint8_t SW1_pressed = 0;
+uint8_t song_loaded = 0;
+uint8_t song_select = 0;
+uint8_t num_songs = 18;
 uint8_t led_bug = 0;
 
 //NES channels
@@ -147,25 +152,16 @@ void HAL_DAC_ConvCpltCallbackCh1(DAC_HandleTypeDef *hdac) {
 	update_DAC_BUFFER(&DAC_BUFFER[DAC_BUFFER_LEN/2], DAC_BUFFER_LEN/2);
 }
 
-void initRAM(void) {
+void initRAM(uint16_t init_addr, uint16_t play_addr) {
 	memset(pRAM, 0, 0x0800);
 	memset(pSRAM, 0, 0x2000);
-	//memset(pAPU, 0, 0x0020);
 	memset(pExRAM, 0, 0x1000);
-	memset(pROM_Full, 0, 0x8000);
 	pStack = pRAM + 0x100;
-	
-	int idx = 0xbdc4;
-	for (uint32_t i=0; i<16956; ++i) {
-		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
-	}
-	
+
 	pExRAM[0x00] = 0x20;						//JSR
-	uint16_t init_addr = 0xbe34;
 	memcpy(&pExRAM[0x01],&init_addr,2);	//Init Address
 	pExRAM[0x03] = 0xF2;						//JAM
 	pExRAM[0x04] = 0x20;						//JSR
-	uint16_t play_addr = 0xf2d0;
 	memcpy(&pExRAM[0x05],&play_addr,2);	//Play Address
 	pExRAM[0x07] = 0x4C;						//JMP
 	pExRAM[0x08] = 0x03;						//$5003  (JAM right before the JSR to play address)
@@ -176,7 +172,6 @@ void initRAM(void) {
 	regSP = 0xFF;
 
 	/*	Reset Read/Write Procs			*/
-
 	ReadMemory[0] = ReadMemory[1] = ReadMemory_RAM;
 	ReadMemory[2] = ReadMemory[3] = ReadMemory_Default;
 	ReadMemory[4] =					ReadMemory_pAPU;
@@ -192,8 +187,19 @@ void initRAM(void) {
 	for(int i = 8; i < 16; i++) {
 		ReadMemory[i] = ReadMemory_ROM;
 		WriteMemory[i] = WriteMemory_Default;
-	}	
+	}
+}
 
+void initInstruction(void) {
+	//do init instructions
+	while (regPC != 0x5003) { //until PC reaches after INIT
+		//execute next instruction
+		emulate6502(nCPUCycle + 1);
+		if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000)) {
+			led_bug = 1;
+			break;
+		}
+	}
 }
 
 void initSong(uint8_t song_num) {
@@ -233,7 +239,72 @@ void initSong(uint8_t song_num) {
 		if (i >= 2) pROM[i] = pROM_Full + ((i-2) << 12);
 		else pROM[i] = pSRAM + (i << 12);
 	}
+	
+	//apparently songs can be switched without calling INIT instructions
+	//but let's just do what the wiki says
+	initInstruction();
 }
+
+
+//========================//
+// 	TONY IMPLEMENT THESE 	//
+//========================//
+
+// Load the SD card data into pROM_Full
+// assume no bank switching for now and put the byte from 0x80 of NSF to load_addr - 0x8000 position of pROM_Full and so on
+void load_ROM(void) {
+	//reset
+	memset(pROM_Full, 0, 0x8000);
+	
+	//Comment out these lines and do your thing
+	int idx = 0xbdc4;
+	for (uint32_t i=0; i<16956; ++i) {
+		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
+	}
+	
+}
+
+// Call this function after finishing reading nsf file
+void load_NSF_data(void) {
+	//load NSF data into ROM
+	load_ROM();
+	
+	//init RAM stuff
+	//comment out these 2 lines and instead use the NSF data
+	uint16_t init_addr = 0xbe34;
+	uint16_t play_addr = 0xf2d0;
+	initRAM(init_addr, play_addr);
+	
+	//init the first song
+	//change the default values to NSF data (i may group these variables to one object later, for now just use it)
+	song_select = 1;
+	num_songs = 18;
+	initSong(song_select);
+	
+	//specify that song is loaded and can play
+	song_loaded = 1;
+}
+
+
+//========================//
+// 	TONY IMPLEMENT ABOVE 	//
+//========================//
+
+
+/**
+	* Define callbacks for buttons here
+	* Then remember to add callbacks in button.c
+	*/
+void SW5_pressed_callback(void) {
+	if (!song_loaded) return;
+	song_select = (song_select + 1) % num_songs;
+	initSong(song_select);
+}
+void SW6_pressed_callback(void) {
+	load_NSF_data();
+}
+
+
 /* USER CODE END 0 */
 
 /**
@@ -268,9 +339,8 @@ int main(void)
   MX_DAC_Init();
   MX_TIM6_Init();
   /* USER CODE BEGIN 2 */
-	initRAM();
-	initSong(0); //to be safe, does not work without this
 	initTriangleLookup();
+	initButtons();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -278,16 +348,6 @@ int main(void)
 	HAL_TIM_Base_Start(&htim6);
 	HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)DAC_BUFFER, DAC_BUFFER_LEN, DAC_ALIGN_12B_R);
-	
-	//do init instructions
-	while (regPC != 0x5003) { //until PC reaches after INIT
-		//execute next instruction
-		emulate6502(nCPUCycle + 1);
-		if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000)) {
-			led_bug = 1;
-			break;
-		}
-	}
 	
   while (1)
   {
@@ -311,7 +371,7 @@ int main(void)
 			//do next frame at 60 Hz
 			if (wav_counter == 0)
 			{
-				if(button_counter && led_bug != 1) {
+				if(song_loaded && led_bug != 1) {
 					while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
 						//execute next instruction
 						emulate6502(nCPUCycle + 1);
@@ -354,30 +414,21 @@ int main(void)
 		
 		//LED thread
 		static uint32_t last_led_ticks = 0;
-		if (HAL_GetTick() - last_led_ticks >= (100 * (4 - (button_counter % 4)))) {
+		if (HAL_GetTick() - last_led_ticks >= 250) {
 			last_led_ticks = HAL_GetTick();
-			HAL_GPIO_TogglePin(GPIOB, GPIO_PIN_1);
+			HAL_GPIO_TogglePin(LED1);
 		}
 		static uint32_t last_led2_ticks = 0;
 		if (HAL_GetTick() - last_led2_ticks >= 10) {	
-			HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0, (GPIO_PinState)(!(led_bug & 0x01)));
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_5, (GPIO_PinState)(!(led_bug & 0x02)));
-			HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4, (GPIO_PinState)(!(led_bug & 0x04)));
+			HAL_GPIO_WritePin(LED2, (GPIO_PinState)(!(led_bug & 0x01)));
+			HAL_GPIO_WritePin(LED3, (GPIO_PinState)(!(led_bug & 0x02)));
 		}
 		
 		//button thread
 		static uint32_t last_button_ticks = 0;
 		if (HAL_GetTick() - last_button_ticks >= 50) {
 			last_button_ticks = HAL_GetTick();
-			if (!HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) && !SW1_pressed) {
-				SW1_pressed = 1;
-				button_counter += 1;
-				//TODO
-				initSong(button_counter % 18);
-			}
-			else if (HAL_GPIO_ReadPin(GPIOC, GPIO_PIN_15) && SW1_pressed) {
-				SW1_pressed = 0;
-			}
+			updateButtons();
 		}
   }
   /* USER CODE END 3 */
@@ -479,7 +530,11 @@ static void MX_TIM6_Init(void)
   TIM_MasterConfigTypeDef sMasterConfig = {0};
 
   /* USER CODE BEGIN TIM6_Init 1 */
-
+	
+	//=============================================================================//
+	// REMEMBER TO CHANGE PERIOD TO (47 * TIMER_RATE) - 1 AFTER CONFIG WITH CUBEMX //
+	//=============================================================================//
+	
   /* USER CODE END TIM6_Init 1 */
   htim6.Instance = TIM6;
   htim6.Init.Prescaler = 0;
@@ -534,29 +589,27 @@ static void MX_GPIO_Init(void)
   __HAL_RCC_GPIOB_CLK_ENABLE();
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOC, GPIO_PIN_4|GPIO_PIN_5, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOC, LED1_Pin|LED2_Pin|LED3_Pin, GPIO_PIN_SET);
 
-  /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, GPIO_PIN_0|GPIO_PIN_1, GPIO_PIN_SET);
-
-  /*Configure GPIO pin : PC15 */
-  GPIO_InitStruct.Pin = GPIO_PIN_15;
+  /*Configure GPIO pin : Button1_Pin */
+  GPIO_InitStruct.Pin = Button1_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_PULLUP;
-  HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
+  HAL_GPIO_Init(Button1_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PC4 PC5 */
-  GPIO_InitStruct.Pin = GPIO_PIN_4|GPIO_PIN_5;
+  /*Configure GPIO pins : LED1_Pin LED2_Pin LED3_Pin */
+  GPIO_InitStruct.Pin = LED1_Pin|LED2_Pin|LED3_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOC, &GPIO_InitStruct);
 
-  /*Configure GPIO pins : PB0 PB1 */
-  GPIO_InitStruct.Pin = GPIO_PIN_0|GPIO_PIN_1;
-  GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
+  /*Configure GPIO pins : Button2_Pin Button3_Pin Button4_Pin Button5_Pin
+                           Button6_Pin */
+  GPIO_InitStruct.Pin = Button2_Pin|Button3_Pin|Button4_Pin|Button5_Pin
+                          |Button6_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
 }
