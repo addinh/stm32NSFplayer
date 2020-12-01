@@ -31,6 +31,12 @@
 #include "emulator6502.h"
 #include "nsf_array.h"
 #include "button.h"
+
+//Tony's include library
+#include "lcd.h"
+#include "nsf.h"
+#include <stdio.h>
+#include <string.h>
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -92,6 +98,16 @@ NoiseChannel noise = {
 	.shift_register = 1,
 	.volume = 0,
 };
+
+//sd card variables
+extern char SDPath[4];  
+extern FATFS SDFatFS;  
+extern FIL SDFile; 
+
+FRESULT res;                                         
+uint32_t byteswritten, bytesread;
+nsf_file file;
+char file_name_list[10][40];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -103,7 +119,7 @@ static void MX_TIM6_Init(void);
 static void MX_SDIO_SD_Init(void);
 static void MX_SPI1_Init(void);
 /* USER CODE BEGIN PFP */
-
+FRESULT scan_files (char* path);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -263,27 +279,36 @@ void initSong(uint8_t song_num) {
 
 // Load the SD card data into pROM_Full
 // assume no bank switching for now and put the byte from 0x80 of NSF to load_addr - 0x8000 position of pROM_Full and so on
-void load_ROM(void) {
+void load_ROM() {
 	//reset
-	memset(pROM_Full, 0, 0x8000);
+	//memset(pROM_Full, 0, 0x8000);
 	
 	//Comment out these lines and do your thing
-	int idx = 0xbdc4;
-	for (uint32_t i=0; i<16956; ++i) {
-		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
-	}
+//	int idx = 0xbdc4;
+//	for (uint32_t i=0; i<16956; ++i) {
+//		pROM_Full[idx - 0x8000 + i] = NSF_ARRAY[i];
+//	}
+	
+//	int idx = load_address;
+//	for (uint32_t i=0; i<file_byte; ++i) {
+//		pROM_Full[idx - 0x8000 + i] = music_data[i];
+//	}
 	
 }
 
 // Call this function after finishing reading nsf file
-void load_NSF_data(void) {
+void load_NSF_data(nsf_file file) {
 	//load NSF data into ROM
-	load_ROM();
+	//int load_address = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
+	//load_ROM();
 	
 	//init RAM stuff
 	//comment out these 2 lines and instead use the NSF data
-	uint16_t init_addr = 0xbe34;
-	uint16_t play_addr = 0xf2d0;
+//	uint16_t init_addr = 0xbe34;
+//	uint16_t play_addr = 0xf2d0;
+//	initRAM(init_addr, play_addr);
+	uint16_t init_addr = (int16_t)file.format.init_address_orgin[1]<<8 | file.format.init_address_orgin[0];
+	uint16_t play_addr = (int16_t)file.format.play_address_orgin[1]<<8 | file.format.play_address_orgin[0];
 	initRAM(init_addr, play_addr);
 	
 	//init the first song
@@ -312,7 +337,7 @@ void SW5_pressed_callback(void) {
 	initSong(song_select);
 }
 void SW6_pressed_callback(void) {
-	load_NSF_data();
+	//load_NSF_data();
 }
 
 
@@ -334,7 +359,7 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
-
+	
   /* USER CODE END Init */
 
   /* Configure the system clock */
@@ -362,7 +387,89 @@ int main(void)
 	HAL_TIM_Base_Start(&htim6);
 	HAL_DAC_Start(&hdac, DAC_CHANNEL_1);
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)DAC_BUFFER, DAC_BUFFER_LEN, DAC_ALIGN_12B_R);
+	//TFT init and sd card mount and get the file name
+	tft_init(PIN_ON_TOP, WHITE, BLACK, RED, GREEN);
+	char buff[256];
+	HAL_Delay(1000);
+	f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+	strcpy(buff, "/");	
+	res = scan_files(buff);
 	
+	//testing for now, reading once
+	tft_printc(0, 5, file_name_list[0]);
+	tft_printc(0, 6, file_name_list[1]);
+	tft_printc(0, 7, file_name_list[2]);
+	f_open(&SDFile, file_name_list[2],  FA_READ);
+		int file_byte = f_size(&SDFile);
+		memset(file.text,0,sizeof(file.text));
+		res = f_read(&SDFile, file.text, 128, (UINT*)&bytesread);
+		if((bytesread == 0) || (res != FR_OK))
+		{
+			char buffer[40];
+			tft_prints(0, 0, "Read no ok",2);
+			//sprintf(buffer,"Read file Failed");
+			//LCD_DrawString(20,6,buffer);
+		}
+		else 
+		{
+			char buffer[strlen("Read Successfully")];
+			tft_prints(0, 0, "Read ok",2);
+		}
+		tft_prints(0, 11, "%d",file_byte);
+		memset(pROM_Full,0,0x8000);
+		int file_byte_left = file_byte-128;
+		int count_time =0;
+		int idx = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
+		while(file_byte_left>0){
+			if(file_byte_left>=4096){
+				uint8_t part_byte[4096];
+				res = f_read(&SDFile, part_byte, 4096, (UINT*)&bytesread);
+				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, 4096*sizeof(uint8_t));
+				for (uint32_t i=0; i<4096; ++i) {
+					pROM_Full[idx - 0x8000 +file_byte-128-file_byte_left+i] = part_byte[i];
+	      }
+				file_byte_left = file_byte_left-4096;
+				if(f_eof(&SDFile)){
+					tft_prints(0, 12, "eof error!");
+				}
+				else{
+					count_time = count_time +1;
+					tft_prints(0, 12, "%d",count_time);
+				}
+			}
+			else{
+				uint8_t part_byte[file_byte_left];
+				res = f_read(&SDFile, part_byte, file_byte_left, (UINT*)&bytesread);
+				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, file_byte_left*sizeof(uint8_t));
+				for (uint32_t i=0; i<file_byte_left; ++i) {
+					pROM_Full[idx - 0x8000+file_byte-128-file_byte_left+i] = part_byte[i];
+	      }
+				file_byte_left = file_byte_left-file_byte_left;
+			}
+			
+		}
+		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
+		if(!f_eof(&SDFile))
+			tft_prints(0, 14, "Not eof!");
+		if((bytesread == 0) || (res != FR_OK))
+		{
+			tft_prints(0, 15, "Read no ok",2);
+		}
+		else 
+		{
+			tft_prints(0, 15, "%d",file_byte);
+		}
+		f_close(&SDFile);
+//		uint16_t init_addr = (int16_t)file.format.init_address_orgin[1]<<8 | file.format.init_address_orgin[0];
+//		uint16_t play_addr = (int16_t)file.format.play_address_orgin[1]<<8 | file.format.play_address_orgin[0];
+//		int load_address = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
+//		tft_prints(0, 16, "%x",init_addr);
+//		tft_prints(0, 17, "%x",play_addr);
+//		tft_prints(0, 18, "%x",load_address);
+		tft_prints(0, 16, "%d",pROM_Full[idx - 0x8000]);
+		tft_prints(0, 17, "%d",pROM_Full[idx - 0x8000+file_byte-128]);
+		tft_update(0);
+	load_NSF_data(file);
   while (1)
   {
     /* USER CODE END WHILE */
@@ -719,7 +826,39 @@ static void MX_GPIO_Init(void)
 }
 
 /* USER CODE BEGIN 4 */
+FRESULT scan_files (char* path)
+{
+    FRESULT res;
+    DIR dir;
+    UINT i;
+    static FILINFO fno;
 
+		int count=0;
+    res = f_opendir(&dir, path);                       /* Open the directory */
+    if (res == FR_OK) {
+        for (;;) {
+            res = f_readdir(&dir, &fno);                   /* Read a directory item */
+            if (res != FR_OK || fno.fname[0] == 0) break;  /* Break on error or end of dir */
+            if (fno.fattrib & AM_DIR) {                    /* It is a directory */
+                i = strlen(path);
+                sprintf(&path[i], "/%s", fno.fname);
+                res = scan_files(path);                    /* Enter the directory */
+                if (res != FR_OK) break;
+                path[i] = 0;
+            } else {                                       /* It is a file. */
+								
+								//char buffer[40];
+							  sprintf(file_name_list[count],"%s",fno.fname);
+							count = count +1;
+							//tft_printc(0,5+count,file_name_list[count]);
+							//tft_prints(0,9,"%d",count);
+            }
+        }
+        f_closedir(&dir);
+    }
+
+    return res;
+}
 /* USER CODE END 4 */
 
 /**

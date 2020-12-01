@@ -819,7 +819,7 @@ ARM Macro Assembler    Page 13
 Command Line: --debug --xref --diag_suppress=9931 --cpu=Cortex-M4.fp --apcs=int
 erwork --depend="project f405\startup_stm32f405xx.d" -o"project f405\startup_st
 m32f405xx.o" -I.\RTE\_Project_F405 -IC:\Keil_v5\ARM\PACK\ARM\CMSIS\5.7.0\CMSIS\
-Core\Include -IC:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\2.13.0\Drivers\CMSIS\Devi
+Core\Include -IC:\Keil_v5\ARM\PACK\Keil\STM32F4xx_DFP\2.15.0\Drivers\CMSIS\Devi
 ce\ST\STM32F4xx\Include --predefine="__MICROLIB SETA 1" --predefine="__UVISION_
 VERSION SETA 526" --predefine="_RTE_ SETA 1" --predefine="STM32F405xx SETA 1" -
 -list=startup_stm32f405xx.lst startup_stm32f405xx.s

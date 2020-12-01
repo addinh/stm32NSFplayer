@@ -76,6 +76,20 @@ void Error_Handler(void);
 #define Button5_GPIO_Port GPIOB
 #define Button6_Pin GPIO_PIN_8
 #define Button6_GPIO_Port GPIOB
+
+//Tony's defines for TFT
+extern SPI_HandleTypeDef hspi1;
+#define TFT_SPI (hspi1)
+//#define TFT_CS_Pin GPIO_PIN_1
+//#define TFT_CS_GPIO_Port GPIOA
+#define TFT_SCK_Pin GPIO_PIN_5
+#define TFT_SCK_GPIO_Port GPIOA
+#define TFT_DC_Pin GPIO_PIN_2
+#define TFT_DC_GPIO_Port GPIOA
+#define TFT_SDA_Pin GPIO_PIN_7
+#define TFT_SDA_GPIO_Port GPIOA
+#define TFT_RES_Pin GPIO_PIN_3
+#define TFT_RES_GPIO_Port GPIOA
 /* USER CODE BEGIN Private defines */
 
 /* USER CODE END Private defines */
