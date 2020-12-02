@@ -83,6 +83,7 @@ uint16_t DAC_BUFFER[DAC_BUFFER_LEN + 16] = {0};
 //uint8_t num_songs = 18;
 //uint8_t led_bug = 0;
 struct {
+	uint8_t nsf_loaded;
 	uint8_t song_loaded;
 	uint8_t song_select;
 	uint8_t num_songs;
@@ -121,10 +122,15 @@ FRESULT res;
 uint32_t byteswritten, bytesread;
 nsf_file file;
 char file_name_list[10][40];
+
+#define max_song 10//for easier implementation without using daynamic array
+#define total_channel 4
 extern TFT_Select_list selected;
+extern TFT_Select_list_detail selected_detail;
 int file_count =0;
 int other_stuff=0;
 int sd_card_inserted_flag =0;
+int channel_enabled[4];
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -189,11 +195,12 @@ void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
 	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
 	memset(mix_buffer, 0, len * 4);
 	
-	//TODO can mute/unmute channels here
-	readPulse(&mix_buffer[0], len, &pulse1);
-	readPulse(&mix_buffer[len], len, &pulse2);
-	readTriangle(&mix_buffer[2*len], len, &triangle);
-	readNoise(&mix_buffer[3*len], len, &noise);
+	if (!musicPlayer.paused) {
+		readPulse(&mix_buffer[0], len, &pulse1);
+		readPulse(&mix_buffer[len], len, &pulse2);
+		readTriangle(&mix_buffer[2*len], len, &triangle);
+		readNoise(&mix_buffer[3*len], len, &noise);
+	}
 	
 	//do mixing
 	mixAudio(buffer, mix_buffer, len);
@@ -267,11 +274,13 @@ void initSong(void) {
 	//fastmemset(DAC_BUFFER, 0, DAC_BUFFER_LEN * 2);
 	uint8_t song_num = musicPlayer.song_select;
 	if (song_num == 0) {
-		musicPlayer.paused = 1;
+		musicPlayer.song_loaded = 0;
+		forceMute(1);
 		return;
 	}
 	else {
-		musicPlayer.paused = 0;
+		musicPlayer.song_loaded = 1;
+		forceMute(0);
 	}
 	
 	regPC = 0x5000;
@@ -302,9 +311,6 @@ void initSong(void) {
 	//apparently songs can be switched without calling INIT instructions
 	//but let's just do what the wiki says
 	initInstruction();
-	
-	//reset muted status
-	forceMute(0);
 	
 	//reset flag
 	//song_changing = 0;
@@ -377,8 +383,9 @@ void load_NSF_data(nsf_file* file) {
 	musicPlayer.num_songs = file->format.total_song;
 	initSong();
 	
-	//specify that song is loaded and can play
-	musicPlayer.song_loaded = 1;
+	//unpause
+	musicPlayer.nsf_loaded = 1;
+	musicPlayer.paused = 0;
 }
 
 
@@ -399,13 +406,32 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	*/
 void SW5_pressed_callback(void) {
 	//TODO song select left/right
-	if (!musicPlayer.song_loaded) return;
-	musicPlayer.song_select = (musicPlayer.song_select + 1) % (musicPlayer.num_songs + 1);
-	initSong();
+	if (!musicPlayer.nsf_loaded) return;
+	switch(selected_detail){
+			case TFT_PAUSE:
+				musicPlayer.paused ^= 1;
+				break;
+			case TFT_P1:
+				pulse1.channel_muted ^=1;
+			break;
+			case TFT_P2:
+				pulse2.channel_muted ^=1;
+			break;
+			case TFT_TR:
+				triangle.channel_muted ^=1;
+			break;
+			case TFT_NS:
+				noise.channel_muted ^=1;
+			break;
+			case TFT_SONG:
+				
+			default:
+				break;
+		}
 }
 //uint8_t first = 1;
-void SW6_pressed_callback(void) {
-	if (!musicPlayer.song_loaded) {
+void SW2_pressed_callback(void) {
+	if (!musicPlayer.nsf_loaded) {
 		#ifdef SAFE_TESTING
 			load_ROM();
 			uint16_t init_addr = 0xbe34;
@@ -422,27 +448,136 @@ void SW6_pressed_callback(void) {
 		#else
 			scan_nsf_file(file_name_list[selected-1]);
 		#endif
+		selected_detail = TFT_SONG;
 	}
 	else{
-		musicPlayer.song_loaded = 0;
-		memset(DAC_BUFFER,0,DAC_BUFFER_LEN);
+		musicPlayer.nsf_loaded = 0;
+		//memset(DAC_BUFFER,0,DAC_BUFFER_LEN*2);
 		tft_update(0);
 		forceMute(1);
 	}
 }
 
 void SW4_pressed_callback(void) {
-	selected = selected +1;
-	if(selected >file_count+other_stuff){
-		if(file_count+other_stuff==0)
-			selected = 0;
-		else 
-			selected=1;
+	if(!musicPlayer.nsf_loaded) {
+		selected = selected +1;
+		if(selected >file_count+other_stuff){
+			//if(file_count+other_stuff==0)
+			//	selected = 0;
+			//else if(other_stuff==0)
+				selected = 1;
+			//else if(selected >file_count)
+			//	selected = max_song+1;
+			//else
+			//	selected=1;
+		}
 	}
-		
-		
+	else{
+		switch(selected_detail){
+			case TFT_SONG:
+				selected_detail=TFT_P1;
+				break;
+			case TFT_PAUSE:
+				selected_detail=TFT_SONG;
+				break;
+			case TFT_P1:
+			case TFT_P2:
+			case TFT_TR:
+			case TFT_NS:
+				selected_detail=TFT_PAUSE;
+				break;
+			default:
+				break;
+		}
+	}
 }
 
+void SW6_pressed_callback(void) {
+	if(!musicPlayer.nsf_loaded) {
+		selected = selected - 1;
+		if(selected < 1){
+			//if(file_count+other_stuff==0)
+			//	selected = 0;
+			//else if(other_stuff==0)
+				selected = file_count;
+			//else if(selected < 1)
+			//	selected = max_song+1;
+			//else
+			//	selected=1;
+		}
+	}
+	else{
+		switch(selected_detail){
+			case TFT_SONG:
+				selected_detail=TFT_PAUSE;
+				break;
+			case TFT_PAUSE:
+				selected_detail=TFT_P1;
+				break;
+			case TFT_P1:
+			case TFT_P2:
+			case TFT_TR:
+			case TFT_NS:
+				selected_detail=TFT_SONG;
+				break;
+			default:
+				break;
+		}
+	}
+}
+
+void SW3_pressed_callback(void) {
+	if (!musicPlayer.nsf_loaded) return;
+	switch(selected_detail){
+			case TFT_SONG:
+				if (musicPlayer.song_select == 0) musicPlayer.song_select = musicPlayer.num_songs + 1;
+				musicPlayer.song_select = (musicPlayer.song_select - 1) % (musicPlayer.num_songs + 1);
+				initSong();
+				break;
+			case TFT_PAUSE:
+				break;
+			case TFT_P1:
+				selected_detail = TFT_NS;
+			break;
+			case TFT_P2:
+				selected_detail = TFT_P1;
+			break;
+			case TFT_TR:
+				selected_detail = TFT_P2;
+			break;
+			case TFT_NS:
+				selected_detail = TFT_TR;
+			break;
+			default:
+				break;
+		}
+}
+
+void SW7_pressed_callback(void){
+	if (!musicPlayer.nsf_loaded) return;
+	switch(selected_detail){
+			case TFT_SONG:
+				musicPlayer.song_select = (musicPlayer.song_select + 1) % (musicPlayer.num_songs + 1);
+				initSong();
+				break;
+			case TFT_PAUSE:
+				break;
+			case TFT_P1:
+				selected_detail = TFT_P2;
+			break;
+			case TFT_P2:
+				selected_detail = TFT_TR;
+			break;
+			case TFT_TR:
+				selected_detail = TFT_NS;
+			break;
+			case TFT_NS:
+				selected_detail = TFT_P1;
+			break;
+			default:
+				break;
+		}
+}
 
 /* USER CODE END 0 */
 
@@ -497,50 +632,108 @@ int main(void)
 	char buff[10];
 	//HAL_Delay(1000);
 	res= f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
-	res = f_stat("SUPERM~1.NSF",NULL);
-	if(res != FR_OK)
-			sd_card_inserted_flag=0;
-	else
-		sd_card_inserted_flag=1;
+	sd_card_inserted_flag=1;
+//	if(res != FR_OK)
+//			sd_card_inserted_flag=0;
+//	else
+//		sd_card_inserted_flag=1;
 	strcpy(buff, "/");	
 	res = scan_files(buff);
-	
-	
-	tft_prints(0, 17, "hi");
-	tft_update(0);
-	
+//	for(uint32_t i=0; i<total_channel;i++){
+//		channel_enabled[i]= 1;
+//	}
+
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
 		//TFT_print thread
-		if(sd_card_inserted_flag==0){
-		res= f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
-			if(res != FR_OK)
-				sd_card_inserted_flag=0;
-			else
-				sd_card_inserted_flag=1;
-		}
+		//Wave generation thread
+		static uint32_t last_tft_ticks = 0;
+
+		//TODO update time = frame rate
+		//TODO trying at 250Hz
+		if (HAL_GetTick() - last_tft_ticks >= 50) {
+			last_tft_ticks = HAL_GetTick();
+			
+		//check for sd card
+//		if(sd_card_inserted_flag==0){
+//		res= f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+//			if(res != FR_OK)
+//				sd_card_inserted_flag=0;
+//			else
+//				sd_card_inserted_flag=1;
+//		}
+//		if(sd_card_inserted_flag==1){
+//		res = f_stat("SUPERM~1.NSF",NULL);
+//			if(res != FR_OK)
+//				sd_card_inserted_flag=0;
+//			else
+//				sd_card_inserted_flag=1;
+//		}
+		
+		
 		if(sd_card_inserted_flag==1){
-		res = f_stat("SUPERM~1.NSF",NULL);
-			if(res != FR_OK)
-				sd_card_inserted_flag=0;
-			else
-				sd_card_inserted_flag=1;
-		}
-		if(sd_card_inserted_flag==1){
-			tft_prints(0,3,"Files:");
-			for (uint32_t i =0; i< file_count; i ++){
-				custom_tft_prints(0,4+i,i+1,file_name_list[i]);
+			if(!musicPlayer.nsf_loaded){
+				tft_prints(0,3,"Files:");
+				for (uint32_t i =0; i< file_count; i ++){
+					custom_tft_prints(0,4+i,i+1,0,file_name_list[i]);
+				}
 			}
+			else{
+				char buffer[10];
+				tft_prints(0,0,"Name: ");
+				tft_prints(7,0,file.format.name);
+				tft_prints(0,1,"Artist: ");
+				tft_prints(9,1,file.format.artist);
+				tft_prints(0,2,"Copyright: ");
+				tft_prints(12,2,file.format.copy_right);
+				custom_tft_prints(0,3,TFT_SONG,1,"current song: ");
+				tft_prints(15,3,"%d/%d",musicPlayer.song_select,musicPlayer.num_songs);
+				
+				
+				tft_prints(0,4,"Channels: ");
+				if(pulse1.channel_muted == 0){
+					tft_set_text_color(BLUE);
+					custom_tft_prints(10,4,TFT_P1,1,"ch_1");
+					tft_set_text_color(BLACK);
+				}
+				else
+					custom_tft_prints(10,4,TFT_P1,1,"ch_1");
+				if(pulse2.channel_muted == 0){
+					tft_set_text_color(BLUE);
+					custom_tft_prints(17,4,TFT_P2,1,"ch_2");
+					tft_set_text_color(BLACK);
+				}
+				else
+					custom_tft_prints(17,4,TFT_P2,1,"ch_2");
+				if(triangle.channel_muted == 0){
+					tft_set_text_color(BLUE);
+					custom_tft_prints(24,4,TFT_TR,1,"ch_3");
+					tft_set_text_color(BLACK);
+				}
+				else
+					custom_tft_prints(24,4,TFT_TR,1,"ch_3");
+				if(noise.channel_muted  == 0){
+					tft_set_text_color(BLUE);
+					custom_tft_prints(31,4,TFT_NS,1,"ch_4");
+					tft_set_text_color(BLACK);
+				}
+				else
+					custom_tft_prints(31,4,TFT_NS,1,"ch_4");
+				
+				custom_tft_prints(0,5,TFT_PAUSE,1,"PAUSED: ");
+				tft_prints(10,5,"%d",(int)musicPlayer.paused);
+	
+				
+		}
 	 }
 		else{
 			tft_prints(0,3,"SD card is not inserted");
 		}
-		if(!musicPlayer.song_loaded){
-			tft_update(0);
-		 }
+		tft_update(0);
+	 }
 		//Wave generation thread
 		static uint32_t last_wav_ticks = 0;
 
@@ -964,14 +1157,14 @@ void scan_nsf_file(char * file_name){
 		res = f_read(&SDFile, file.text, 128, (UINT*)&bytesread);
 		if((bytesread == 0) || (res != FR_OK))
 		{
-			tft_prints(0, 16, "%d",res);
+			tft_prints(0, 18, "%d",res);
 		}
 		else 
 		{
-			tft_prints(0, 16, "Read ok",2);
+			tft_prints(0, 18, "Read ok",2);
 		}
 		tft_update(0);
-		tft_prints(0, 17, "%d",file_byte);
+		tft_prints(0, 19, "%d",file_byte);
 		int file_byte_left = file_byte-128;
 		int idx = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
 		

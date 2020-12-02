@@ -22,19 +22,30 @@ typedef enum {
 } TFT_ORIENTATION;
 
 typedef enum {
-    SONG_1 = 1,
-		SONG_2,
-		SONG_3,
-		SONG_4,
-		SONG_5,
-		SONG_6,
-		SONG_7,
-		SONG_8,
-		SONG_9,
-		SONG_10,
+  FILE_1 = 1,
+	FILE_2,
+	FILE_3,
+	FILE_4,
+	FILE_5,
+	FILE_6,
+	FILE_7,
+	FILE_8,
+	FILE_9,
+	FILE_10
 } TFT_Select_list;
 
+typedef enum {
+	TFT_SONG,
+	TFT_P1,
+	TFT_P2,
+	TFT_TR,
+	TFT_NS,
+	TFT_PAUSE
+} TFT_Select_list_detail;
+
+
 extern TFT_Select_list selected;
+extern TFT_Select_list_detail selected_detail;
 /* GPIO settings */
 
 /* Colors */
@@ -196,6 +207,6 @@ uint8_t tft_update(uint32_t period);
 
 uint8_t tft_update2(uint32_t period);
 
-void custom_tft_prints(uint8_t x, uint8_t y, TFT_Select_list num, const char *fmt,...);
+void custom_tft_prints(uint8_t x, uint8_t y, int num, int pages, const char *pstr,...);
 
 #endif        /* __LCD_MAIN_H */

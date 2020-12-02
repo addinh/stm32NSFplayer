@@ -11,7 +11,7 @@
 extern TFTBuffer_STRUCT default_tft_screens;
 extern TFTBuffer tft_screens;
 TFT_Select_list selected =1;
-
+TFT_Select_list_detail selected_detail =0;
 //private data
 uint16_t curr_bg_color = BLACK;
 uint16_t curr_highlight_color = BLACK;
@@ -534,12 +534,25 @@ uint8_t tft_update2(uint32_t period) {
     return 1;
 }
 
-void custom_tft_prints(uint8_t x, uint8_t y, TFT_Select_list num, const char *fmt,...){
-				if(selected == num){
+void custom_tft_prints(uint8_t x, uint8_t y, int num, int pages,const char *fmt,...){
+				if(pages ==0){
+				if(selected == num ){
 					tft_set_text_color(RED);
 					tft_prints(x, y, fmt);
 					tft_set_text_color(BLACK);
 				}
 				else
 					 tft_prints(x, y, fmt);
+			}
+				if(pages ==1){
+				if(selected_detail == num ){
+					tft_set_text_color(RED);
+					tft_prints(x, y, fmt);
+					tft_set_text_color(BLACK);
+				}
+				else
+					 tft_prints(x, y, fmt);
+			}
+				
+				
 }
