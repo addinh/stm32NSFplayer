@@ -77,11 +77,17 @@ TIM_HandleTypeDef htim6;
 #define DAC_BUFFER_LEN 256
 uint16_t DAC_BUFFER[DAC_BUFFER_LEN + 16] = {0};
 
-//debug
-uint8_t song_loaded = 0;
-uint8_t song_select = 0;
-uint8_t num_songs = 18;
-uint8_t led_bug = 0;
+//music player variables
+//uint8_t song_loaded = 0;
+//uint8_t song_select = 0;
+//uint8_t num_songs = 18;
+//uint8_t led_bug = 0;
+struct {
+	uint8_t song_loaded;
+	uint8_t song_select;
+	uint8_t num_songs;
+	uint8_t paused;
+} musicPlayer;
 
 volatile uint8_t update_flag = 0;
 //volatile uint8_t song_changing = 0;
@@ -248,20 +254,28 @@ void initInstruction(void) {
 		//execute next instruction
 		emulate6502(nCPUCycle + 1);
 		if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000)) {
-			led_bug = 1;
+			musicPlayer.paused = 1;
 			break;
 		}
 	}
 }
 
-void initSong(uint8_t song_num) {
+void initSong(void) {
 	//set flag
 	//__disable_irq();
 	//song_changing = 1;
 	//fastmemset(DAC_BUFFER, 0, DAC_BUFFER_LEN * 2);
+	uint8_t song_num = musicPlayer.song_select;
+	if (song_num == 0) {
+		musicPlayer.paused = 1;
+		return;
+	}
+	else {
+		musicPlayer.paused = 0;
+	}
 	
 	regPC = 0x5000;
-	regA = (song_num == 0 ? 1 : song_num) - 1; //safety again
+	regA = song_num - 1;
 	regX = bPALMode;
 	regY = 0; //bCleanAXY ? 0 : 0xCD;
 	regSP = 0xFF;
@@ -359,12 +373,12 @@ void load_NSF_data(nsf_file* file) {
 	
 	//init the first song
 	//change the default values to NSF data (i may group these variables to one object later, for now just use it)
-	song_select = file->format.starting_song;
-	num_songs = file->format.total_song;
-	initSong(song_select);
+	musicPlayer.song_select = 0;//file->format.starting_song;
+	musicPlayer.num_songs = file->format.total_song;
+	initSong();
 	
 	//specify that song is loaded and can play
-	song_loaded = 1;
+	musicPlayer.song_loaded = 1;
 }
 
 
@@ -384,13 +398,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	* Then remember to add callbacks in button.c
 	*/
 void SW5_pressed_callback(void) {
-	if (!song_loaded) return;
-	song_select = (song_select + 1) % num_songs;
-	initSong(song_select);
+	//TODO song select left/right
+	if (!musicPlayer.song_loaded) return;
+	musicPlayer.song_select = (musicPlayer.song_select + 1) % (musicPlayer.num_songs + 1);
+	initSong();
 }
 //uint8_t first = 1;
 void SW6_pressed_callback(void) {
-	if (!song_loaded) {
+	if (!musicPlayer.song_loaded) {
 		#ifdef SAFE_TESTING
 			load_ROM();
 			uint16_t init_addr = 0xbe34;
@@ -409,7 +424,7 @@ void SW6_pressed_callback(void) {
 		#endif
 	}
 	else{
-		song_loaded=0;
+		musicPlayer.song_loaded = 0;
 		memset(DAC_BUFFER,0,DAC_BUFFER_LEN);
 		tft_update(0);
 		forceMute(1);
@@ -523,7 +538,7 @@ int main(void)
 		else{
 			tft_prints(0,3,"SD card is not inserted");
 		}
-		if(!song_loaded){
+		if(!musicPlayer.song_loaded){
 			tft_update(0);
 		 }
 		//Wave generation thread
@@ -543,12 +558,12 @@ int main(void)
 				//do next frame at 60 Hz
 				if (wav_counter == 0)
 				{
-					if(song_loaded && led_bug != 1) {
+					if(musicPlayer.song_loaded && !musicPlayer.paused) {
 						while (!(regPC > 0x5FFF)) { //until PC reaches PLAY instructions
 							//execute next instruction
 							emulate6502(nCPUCycle + 1);
 							if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-								led_bug = 1;
+								musicPlayer.paused = 1;
 								break;
 							}
 						}
@@ -556,7 +571,7 @@ int main(void)
 							//execute next instruction
 							emulate6502(nCPUCycle + 1);
 							if (regPC < 0x5000 || (regPC > 0x5009 && regPC < 0x8000) || (bCPUJammed == 1)) {
-								led_bug = 1;
+								musicPlayer.paused = 1;
 								break;
 							}
 						}
@@ -579,8 +594,8 @@ int main(void)
 		}
 		static uint32_t last_led2_ticks = 0;
 		if (HAL_GetTick() - last_led2_ticks >= 10) {	
-			HAL_GPIO_WritePin(LED2, (GPIO_PinState)(!(led_bug & 0x01)));
-			HAL_GPIO_WritePin(LED1, (GPIO_PinState)(!(led_bug & 0x02)));
+			HAL_GPIO_WritePin(LED2, (GPIO_PinState)(!(musicPlayer.paused & 0x01)));
+			HAL_GPIO_WritePin(LED1, (GPIO_PinState)(!(musicPlayer.paused & 0x02)));
 		}
 		
 		//button thread
