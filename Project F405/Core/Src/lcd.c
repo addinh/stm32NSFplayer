@@ -10,7 +10,7 @@
 
 extern TFTBuffer_STRUCT default_tft_screens;
 extern TFTBuffer tft_screens;
-TFT_Select_list selected =0;
+TFT_Select_list selected =1;
 
 //private data
 uint16_t curr_bg_color = BLACK;

@@ -70,7 +70,9 @@ static	BYTE		pSRAM[0x2000];			//SRAM:		0x6000 - 0x7FFF (non-FDS only)
 
 static	BYTE		pExRAM[0x1000];			//ExRAM:	0x5C00 - 0x5FF5 (MMC5 only)
 								// Also holds NSF player info (at 0x5000 - 0x500F)
-static	BYTE		pROM_Full[0x8000];		//Full ROM buffer
+								
+#define MAX_ROM_SIZE 0x9000
+static	BYTE		pROM_Full[MAX_ROM_SIZE];		//Full ROM buffer
 
 static	BYTE*		pROM[10];		//ROM banks (point to areas in pROM_Full)
 								//0x8000 - 0xFFFF
@@ -113,7 +115,7 @@ static	BYTE		bCPUJammed;		// 0 = not jammed.  1 = really jammed.  2 = 'fake' jam
 //	 *	NSF Preparation Information
 //	 */
 
-//	BYTE		nBankswitchInitValues[10];	//banks to swap to on tune init
+static BYTE		nBankswitchInitValues[10];	//banks to swap to on tune init
 //	WORD		nPlayAddress;				// Play routine address
 //	WORD		nInitAddress;				// Init routine address
 
@@ -1058,19 +1060,27 @@ jammed:
 /**
  * Reimplementing the read/write here
  */
-static BYTE 		ReadMemory_RAM(WORD a)				{ return pRAM[a & 0x07FF]; }
-static BYTE 		ReadMemory_ExRAM(WORD a)			{ return pExRAM[a & 0x0FFF]; }
-static BYTE 		ReadMemory_SRAM(WORD a)				{ return pSRAM[a & 0x1FFF]; }
-BYTE 		ReadMemory_pAPU(WORD a);//				{ return pAPU[a & 0x001F]; } //TODO read from wave structs
-static BYTE 		ReadMemory_ROM(WORD a)				{ return pROM[(a >> 12) - 6][a & 0x0FFF]; }
-static BYTE 		ReadMemory_Default(WORD a)			{ return (a >> 8); }
+static inline BYTE 		ReadMemory_RAM(WORD a)				{ return pRAM[a & 0x07FF]; }
+static inline BYTE 		ReadMemory_ExRAM(WORD a)			{ return pExRAM[a & 0x0FFF]; }
+static inline BYTE 		ReadMemory_SRAM(WORD a)				{ return pSRAM[a & 0x1FFF]; }
+inline BYTE 		ReadMemory_pAPU(WORD a);//				{ return pAPU[a & 0x001F]; } //TODO read from wave structs
+static inline BYTE 		ReadMemory_ROM(WORD a)				{ return pROM[(a >> 12) - 6][a & 0x0FFF]; }
+static inline BYTE 		ReadMemory_Default(WORD a)			{ return (a >> 8); }
 
 
-static void 		WriteMemory_RAM(WORD a,BYTE v)		{ pRAM[a & 0x07FF] = v; }
-static void 		WriteMemory_ExRAM(WORD a,BYTE v)	{ pExRAM[a & 0x0FFF] = v; } //TODO bank switching stuff
-static void 		WriteMemory_SRAM(WORD a,BYTE v)		{ pSRAM[a & 0x1FFF] = v; }
-void 		WriteMemory_pAPU(WORD a,BYTE v);//	{ pAPU[a & 0x001F] = v; } //TODO write to wave structs
-static void 		WriteMemory_Default(WORD a,BYTE v)	{ }
+static inline void 		WriteMemory_RAM(WORD a,BYTE v)		{ pRAM[a & 0x07FF] = v; }
+static inline void 		WriteMemory_ExRAM(WORD a,BYTE v) {
+	pExRAM[a & 0x0FFF] = v;
+	
+	//do bank switching
+	if (a < 0x5FF6) return;
+	uint8_t bank = a - 0x5FF6;
+	if (bank >= 2) pROM[bank] = pROM_Full + (v << 12);
+	else pROM[bank] = pSRAM + (v << 12);
+}
+static inline void 		WriteMemory_SRAM(WORD a,BYTE v)		{ pSRAM[a & 0x1FFF] = v; }
+inline void 		WriteMemory_pAPU(WORD a,BYTE v);	//{ pAPU[a & 0x001F] = v; } //TODO write to wave structs
+static inline void 		WriteMemory_Default(WORD a,BYTE v)	{ }
 
 
 /**

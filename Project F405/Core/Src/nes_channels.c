@@ -6,6 +6,8 @@
 #define TRIANGLE_MIX_SCALE 		1.0f
 #define NOISE_MIX_SCALE 			0.4f
 
+//#define OPTIMIZE_SPEED
+
 //buffer for unused pAPU registers just in case (DMC)
 uint8_t pAPU_unused[0x20] = {0};
 
@@ -209,6 +211,7 @@ void readPulse(uint8_t* buffer, const uint16_t buffer_len, PulseChannel* pulse) 
 		return;
 	pulse->wave.amplitude = (uint8_t)(pulse->wave.volume * PULSE_MIX_SCALE);
 	
+	#ifdef OPTIMIZE_SPEED
 	for (uint16_t i = 0; i < buffer_len;) {
 		int count = (pulse->wave.period - pulse->wave.counter + TIMER_HALF_PRESCALER-1) / TIMER_HALF_PRESCALER;
 		if (count > (buffer_len-i)) {
@@ -222,20 +225,21 @@ void readPulse(uint8_t* buffer, const uint16_t buffer_len, PulseChannel* pulse) 
 			pulse->wave.pulse_counter = (pulse->wave.pulse_counter + 1) % 8;
 		}
 	}
-	
-//	#pragma unroll 16
-//	for (uint16_t i = 0; i < buffer_len; ++i) {
-//		if (PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter]) {
-//			//REMEMBER TO RESET BUFFER TO 0
-//			buffer[i] += pulse->wave.amplitude;
-//		}
-//		
-//		//every 2*[period] CPU cycles, [pulse_counter] goes up by 1
-//		pulse->wave.counter = (pulse->wave.counter + TIMER_HALF_PRESCALER) % pulse->wave.period;
-//		if (pulse->wave.counter < TIMER_HALF_PRESCALER) {
-//			pulse->wave.pulse_counter = (pulse->wave.pulse_counter + 1) % 8;
-//		}
-//	}
+	#else
+	#pragma unroll 16
+	for (uint16_t i = 0; i < buffer_len; ++i) {
+		if (PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter]) {
+			//REMEMBER TO RESET BUFFER TO 0
+			buffer[i] += pulse->wave.amplitude;
+		}
+		
+		//every 2*[period] CPU cycles, [pulse_counter] goes up by 1
+		pulse->wave.counter = (pulse->wave.counter + TIMER_HALF_PRESCALER) % pulse->wave.period;
+		if (pulse->wave.counter < TIMER_HALF_PRESCALER) {
+			pulse->wave.pulse_counter = (pulse->wave.pulse_counter + 1) % 8;
+		}
+	}
+	#endif
 }
 
 
@@ -307,6 +311,7 @@ void readTriangle(uint8_t* buffer, const uint16_t buffer_len, TriangleChannel* t
 	if (!(tri->wave.enable && tri->wave.length_counter && tri->wave.linear_counter))
 		return;
 	
+	#ifdef OPTIMIZE_SPEED
 	for (uint16_t i = 0; i < buffer_len;) {
 		int count = (tri->wave.period - tri->wave.counter + TIMER_PRESCALER-1)/TIMER_PRESCALER;
 		if (count > (buffer_len-i)) {
@@ -320,18 +325,19 @@ void readTriangle(uint8_t* buffer, const uint16_t buffer_len, TriangleChannel* t
 			tri->wave.amplitude_counter = (tri->wave.amplitude_counter + 1) % 32;
 		}
 	}
-	
-//	#pragma unroll 16
-//	for (uint16_t i = 0; i < buffer_len; ++i) {
-//		//REMEMBER TO RESET BUFFER TO 0
-//		buffer[i] += TRIANGLE_LOOKUP[tri->wave.amplitude_counter];
-//		
-//		//every [period] CPU cycles, [amplitude_counter] goes up by 1
-//		tri->wave.counter = (tri->wave.counter + TIMER_PRESCALER) % tri->wave.period;
-//		if (tri->wave.counter < TIMER_PRESCALER) {
-//			tri->wave.amplitude_counter = (tri->wave.amplitude_counter + 1) % 32;
-//		}
-//	}
+	#else
+	#pragma unroll 16
+	for (uint16_t i = 0; i < buffer_len; ++i) {
+		//REMEMBER TO RESET BUFFER TO 0
+		buffer[i] += TRIANGLE_LOOKUP[tri->wave.amplitude_counter];
+		
+		//every [period] CPU cycles, [amplitude_counter] goes up by 1
+		tri->wave.counter = (tri->wave.counter + TIMER_PRESCALER) % tri->wave.period;
+		if (tri->wave.counter < TIMER_PRESCALER) {
+			tri->wave.amplitude_counter = (tri->wave.amplitude_counter + 1) % 32;
+		}
+	}
+	#endif
 }
 
 void setTriangleTimer(TriangleChannel *tri, uint16_t timer) {

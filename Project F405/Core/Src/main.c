@@ -47,7 +47,7 @@
 #define LED2 GPIOC, GPIO_PIN_2
 #define LED3 GPIOC, GPIO_PIN_3
 
-#define SAFE_TESTING
+//#define SAFE_TESTING
 #ifdef SAFE_TESTING
 	#include "nsf_array.h"
 #endif
@@ -74,7 +74,7 @@ TIM_HandleTypeDef htim2;
 TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN PV */
-#define DAC_BUFFER_LEN 2048
+#define DAC_BUFFER_LEN 256
 uint16_t DAC_BUFFER[DAC_BUFFER_LEN + 16] = {0};
 
 //debug
@@ -115,6 +115,10 @@ FRESULT res;
 uint32_t byteswritten, bytesread;
 nsf_file file;
 char file_name_list[10][40];
+extern TFT_Select_list selected;
+int file_count =0;
+int other_stuff=0;
+int sd_card_inserted_flag =0;
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -128,7 +132,7 @@ static void MX_SPI1_Init(void);
 static void MX_TIM2_Init(void);
 /* USER CODE BEGIN PFP */
 FRESULT scan_files (char* path);
-void scan_nsf_file(void);
+void scan_nsf_file(char * file_name);
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
@@ -177,7 +181,7 @@ void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
 	
 	//create a temp array for mixing
 	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
-	fastmemset(mix_buffer, 0, len * 4);
+	memset(mix_buffer, 0, len * 4);
 	
 	//TODO can mute/unmute channels here
 	readPulse(&mix_buffer[0], len, &pulse1);
@@ -278,19 +282,7 @@ void initSong(uint8_t song_num) {
 	WriteMemory_pAPU(0x4017,0);
 
 	for(int i = 0; i < 10; i++) {
-		//WriteMemory_ExRAM(0x5FF6 + i, nBankswitchInitValues[i]);
-
-		//if using Famitracker's ROM method
-		//from current understanding, for example load_addr is bdc4
-		//then pROM[0] to pROM[5] points to pROM_Full[0x0...]
-		//pROM[6] points to pROM_Full[0x1...] and so on
-		//pROM[i] = pROM_Full + (nBankswitchInitValues[i] << 12);
-
-		//if pROM_Full is precisely 0x8000-0xFFFF
-		//pROM[2] points to pROM_Full[0x0...], pROM[3] points to pROM_Full[0x1...] and so on
-		//ignore 0 and 1 for now, point to SRAM instead
-		if (i >= 2) pROM[i] = pROM_Full + ((i-2) << 12);
-		else pROM[i] = pSRAM + (i << 12);
+		WriteMemory_ExRAM(0x5FF6 + i, nBankswitchInitValues[i]);
 	}
 	
 	//apparently songs can be switched without calling INIT instructions
@@ -332,7 +324,7 @@ void load_ROM() {
 }
 
 // Call this function after finishing reading nsf file
-void load_NSF_data(nsf_file file) {
+void load_NSF_data(nsf_file* file) {
 	//load NSF data into ROM
 	//int load_address = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
 	//load_ROM();
@@ -342,14 +334,33 @@ void load_NSF_data(nsf_file file) {
 //	uint16_t init_addr = 0xbe34;
 //	uint16_t play_addr = 0xf2d0;
 //	initRAM(init_addr, play_addr);
-	uint16_t init_addr = (int16_t)file.format.init_address_orgin[1]<<8 | file.format.init_address_orgin[0];
-	uint16_t play_addr = (int16_t)file.format.play_address_orgin[1]<<8 | file.format.play_address_orgin[0];
+	uint16_t init_addr = (int16_t)file->format.init_address_orgin[1]<<8 | file->format.init_address_orgin[0];
+	uint16_t play_addr = (int16_t)file->format.play_address_orgin[1]<<8 | file->format.play_address_orgin[0];
 	initRAM(init_addr, play_addr);
+	
+	//bankswitching setup
+	uint8_t use_bankswitch = 0;
+	for (uint8_t i=0; i<8; ++i) use_bankswitch += file->format.Bankswitch[i];
+	if (use_bankswitch) {
+		for (uint8_t i=0; i<10; ++i) {
+			if (i >= 2) {
+				nBankswitchInitValues[i] = file->format.Bankswitch[i-2];
+			}
+			else nBankswitchInitValues[i] = i;
+		}
+	}
+	else {
+		for (uint8_t i=0; i<10; ++i) {
+			//TODO: according to famitracker, pROM[i] points to pROM_Full[0x0...] for banks less than load address?
+			if (i >= 2) nBankswitchInitValues[i] = i-2;
+			else nBankswitchInitValues[i] = i;
+		}
+	}
 	
 	//init the first song
 	//change the default values to NSF data (i may group these variables to one object later, for now just use it)
-	song_select = 1;
-	num_songs = 18;
+	song_select = file->format.starting_song;
+	num_songs = file->format.total_song;
 	initSong(song_select);
 	
 	//specify that song is loaded and can play
@@ -394,7 +405,7 @@ void SW6_pressed_callback(void) {
 			//}
 			song_loaded = 1;
 		#else
-			scan_nsf_file();
+			scan_nsf_file(file_name_list[selected-1]);
 		#endif
 	}
 	else{
@@ -406,7 +417,15 @@ void SW6_pressed_callback(void) {
 }
 
 void SW4_pressed_callback(void) {
-	//load_NSF_data();
+	selected = selected +1;
+	if(selected >file_count+other_stuff){
+		if(file_count+other_stuff==0)
+			selected = 0;
+		else 
+			selected=1;
+	}
+		
+		
 }
 
 
@@ -460,18 +479,53 @@ int main(void)
 	HAL_DAC_Start_DMA(&hdac, DAC_CHANNEL_1, (uint32_t*)DAC_BUFFER, DAC_BUFFER_LEN, DAC_ALIGN_12B_R);
 	//TFT init and sd card mount and get the file name
 	tft_init(PIN_ON_TOP, WHITE, BLACK, RED, GREEN);
-	char buff[256];
+	char buff[10];
 	//HAL_Delay(1000);
-	f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+	res= f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+	res = f_stat("SUPERM~1.NSF",NULL);
+	if(res != FR_OK)
+			sd_card_inserted_flag=0;
+	else
+		sd_card_inserted_flag=1;
 	strcpy(buff, "/");	
 	res = scan_files(buff);
+	
+	
+	tft_prints(0, 17, "hi");
+	tft_update(0);
 	
   while (1)
   {
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-			
+		//TFT_print thread
+		if(sd_card_inserted_flag==0){
+		res= f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+			if(res != FR_OK)
+				sd_card_inserted_flag=0;
+			else
+				sd_card_inserted_flag=1;
+		}
+		if(sd_card_inserted_flag==1){
+		res = f_stat("SUPERM~1.NSF",NULL);
+			if(res != FR_OK)
+				sd_card_inserted_flag=0;
+			else
+				sd_card_inserted_flag=1;
+		}
+		if(sd_card_inserted_flag==1){
+			tft_prints(0,3,"Files:");
+			for (uint32_t i =0; i< file_count; i ++){
+				custom_tft_prints(0,4+i,i+1,file_name_list[i]);
+			}
+	 }
+		else{
+			tft_prints(0,3,"SD card is not inserted");
+		}
+		if(!song_loaded){
+			tft_update(0);
+		 }
 		//Wave generation thread
 		static uint32_t last_wav_ticks = 0;
 
@@ -641,7 +695,7 @@ static void MX_SDIO_SD_Init(void)
   hsd.Init.ClockPowerSave = SDIO_CLOCK_POWER_SAVE_DISABLE;
   hsd.Init.BusWide = SDIO_BUS_WIDE_1B;
   hsd.Init.HardwareFlowControl = SDIO_HARDWARE_FLOW_CONTROL_DISABLE;
-  hsd.Init.ClockDiv = 0;
+  hsd.Init.ClockDiv = 20;
   /* USER CODE BEGIN SDIO_Init 2 */
 
   /* USER CODE END SDIO_Init 2 */
@@ -841,7 +895,7 @@ static void MX_GPIO_Init(void)
   GPIO_InitStruct.Pin = GPIO_PIN_1|GPIO_PIN_2|GPIO_PIN_3;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
-  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
+  GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_HIGH;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
   /*Configure GPIO pins : Button2_Pin Button3_Pin Button4_Pin Button5_Pin
@@ -880,15 +934,14 @@ FRESULT scan_files (char* path)
             }
         }
         f_closedir(&dir);
+				file_count =count;
     }
 
     return res;
 }
 
-void scan_nsf_file(void){
-		f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
-		HAL_Delay(50);
-	  res =f_open(&SDFile, file_name_list[1],  FA_READ);
+void scan_nsf_file(char * file_name){
+	  res =f_open(&SDFile, file_name,  FA_READ);
 		if(res != FR_OK)
 			tft_prints(0, 15, "%d",res);
 		int file_byte = f_size(&SDFile);
@@ -900,30 +953,34 @@ void scan_nsf_file(void){
 		}
 		else 
 		{
-			char buffer[strlen("Read Successfully")];
 			tft_prints(0, 16, "Read ok",2);
 		}
 		tft_update(0);
 		tft_prints(0, 17, "%d",file_byte);
-		memset(pROM_Full,0,0x8000);
 		int file_byte_left = file_byte-128;
 		int idx = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
+		
+		//program only supports reading up to 9KB music data
+		//if file size too big, cancel
+		//TODO what happens if cancel? tft print something?
+		if (file_byte_left > MAX_ROM_SIZE) return;
+		
+		memset(pROM_Full,0,MAX_ROM_SIZE);
+		
+		#define CHUNK_SIZE 256
+		
 		while(file_byte_left>0){
-			if(file_byte_left>=4096){
-				uint8_t part_byte[4096];
-				res = f_read(&SDFile, part_byte, 4096, (UINT*)&bytesread);
-				for (uint32_t i=0; i<4096; ++i) {
+			if(file_byte_left >= CHUNK_SIZE){
+				uint8_t part_byte[CHUNK_SIZE];
+				res = f_read(&SDFile, part_byte, CHUNK_SIZE, (UINT*)&bytesread);
+				for (uint32_t i=0; i<CHUNK_SIZE; ++i) {
 					pROM_Full[idx - 0x8000 +file_byte-128-file_byte_left+i] = part_byte[i];
 	      }
-				file_byte_left = file_byte_left-4096;
-				if(f_eof(&SDFile)){
-					tft_prints(0, 18, "eof error!");
-				}
+				file_byte_left = file_byte_left-CHUNK_SIZE;
 			}
 			else{
 				uint8_t part_byte[file_byte_left];
 				res = f_read(&SDFile, part_byte, file_byte_left, (UINT*)&bytesread);
-				//memcpy((void *)music_byte[file_byte-128-file_byte_left], part_byte, file_byte_left*sizeof(uint8_t));
 				for (uint32_t i=0; i<file_byte_left; ++i) {
 					pROM_Full[idx - 0x8000+file_byte-128-file_byte_left+i] = part_byte[i];
 	      }
@@ -931,14 +988,11 @@ void scan_nsf_file(void){
 			}
 			
 		}
-		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
 		if(!f_eof(&SDFile))
 			tft_prints(0, 19, "Not eof!");
-		f_rewind(&SDFile);
 		f_close(&SDFile);
 		tft_update(0);
-		f_mount(0, "",0);
-	  load_NSF_data(file);
+	  load_NSF_data(&file);
 }
 /* USER CODE END 4 */
 
