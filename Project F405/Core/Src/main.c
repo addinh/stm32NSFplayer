@@ -791,8 +791,8 @@ FRESULT scan_files (char* path)
 }
 
 void scan_nsf_file(void){
-		f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
-		HAL_Delay(50);
+		//f_mount(&SDFatFS, (TCHAR const*)SDPath, 0);
+		//HAL_Delay(50);
 	  res =f_open(&SDFile, file_name_list[1],  FA_READ);
 		if(res != FR_OK)
 			tft_prints(0, 15, "%d",res);
@@ -839,10 +839,10 @@ void scan_nsf_file(void){
 		//res = f_read(&SDFile, music_byte, 4096, (UINT*)&bytesread);
 		if(!f_eof(&SDFile))
 			tft_prints(0, 19, "Not eof!");
-		f_rewind(&SDFile);
+		//f_rewind(&SDFile);
 		f_close(&SDFile);
 		tft_update(0);
-		f_mount(0, "",0);
+		//f_mount(0, "",0);
 	  load_NSF_data(file);
 }
 /* USER CODE END 4 */
