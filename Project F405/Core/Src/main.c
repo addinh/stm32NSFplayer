@@ -377,6 +377,7 @@ void SW5_pressed_callback(void) {
 	song_select = (song_select + 1) % num_songs;
 	initSong(song_select);
 }
+//uint8_t first = 1;
 void SW6_pressed_callback(void) {
 	if (!song_loaded) {
 		#ifdef SAFE_TESTING
@@ -387,6 +388,10 @@ void SW6_pressed_callback(void) {
 			song_select = 2;
 			num_songs = 18;
 			initSong(song_select);
+			//if (first) {
+			//	initInstruction();
+			//	first = 0;
+			//}
 			song_loaded = 1;
 		#else
 			scan_nsf_file();
