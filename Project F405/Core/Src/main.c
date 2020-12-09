@@ -190,7 +190,6 @@ uint8_t mix_buffer[DAC_BUFFER_LEN * 4 / 2] = {0};
 void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
 	//if changing song, return
 	//if (song_changing) return;
-	
 	//create a temp array for mixing
 	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
 	memset(mix_buffer, 0, len * 4);
@@ -318,10 +317,6 @@ void initSong(void) {
 }
 
 
-//========================//
-// 	TONY IMPLEMENT THESE 	//
-//========================//
-
 // Load the SD card data into pROM_Full
 // assume no bank switching for now and put the byte from 0x80 of NSF to load_addr - 0x8000 position of pROM_Full and so on
 void load_ROM() {
@@ -388,10 +383,6 @@ void load_NSF_data(nsf_file* file) {
 	musicPlayer.paused = 0;
 }
 
-
-//========================//
-// 	TONY IMPLEMENT ABOVE 	//
-//========================//
 
 //Frame Counter Timer
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
