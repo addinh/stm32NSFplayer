@@ -16,32 +16,6 @@
   *
   ******************************************************************************
   */
-	
-	
-	/*
-	
-	PROGRAM DESCRIPTION
-	
-	- When turning on the program with the SD card inserted, all files in the SD card are scanned (scan_files())
-	- SW4 and SW6 are used to select file
-	- When a file is selected with SW2, scan_nsf_file() is called to load .nsf data to pROM_Full buffer
-		initRAM() is called to setup the other RAM buffers
-		This also switches the TFT screen to NSF information mode
-	- Buttons SW3 to SW7 are used to select song, mute individual channels or pause the song
-	- If the song selected is not 0, initSong() is called to perform song-related initializations, including:
-			+ Setting up pROM to point to pROM_Full according to bank switching
-			+ Setting up other registers and call the 6502 INIT instructions
-	- If a song has been loaded, 6502 PLAY instructions are called with frequency 60 Hz.
-		This is done with a 240 Hz TIM2 interrupt that also invokes a clockFrame() function for updating channel parameters
-	- 6502 instructions are decoded using emulate6502() function
-	- The music data (instructions) purpose is to update the registers $4000 to $4017 with music note data. 
-		Here 4 structs are used to hold these "registers"
-	- The DAC Channel 1 is used to output to the PA4 pin. This uses DMA to transfer data from the DAC_BUFFER array
-		to the DAC, and the DMA has half and full callbacks to update the DAC_BUFFER with data from the 4 structs.
-		The DAC is driven with a 84 MHz / (47 * 4 - 1) which is about 450 kHz timer (TIM6)
-	
-	*/
-	
 /* USER CODE END Header */
 /* Includes ------------------------------------------------------------------*/
 #include "main.h"
@@ -216,7 +190,6 @@ uint8_t mix_buffer[DAC_BUFFER_LEN * 4 / 2] = {0};
 void update_DAC_BUFFER(uint16_t *buffer, uint16_t len) {
 	//if changing song, return
 	//if (song_changing) return;
-	
 	//create a temp array for mixing
 	//uint8_t* mix_buffer = (uint8_t*)malloc(len * 4);
 	memset(mix_buffer, 0, len * 4);
@@ -344,7 +317,6 @@ void initSong(void) {
 }
 
 
-
 // Load the SD card data into pROM_Full
 // (UNUSED, implemented in scan_nsf_file())
 void load_ROM() {
@@ -393,7 +365,6 @@ void load_NSF_data(nsf_file* file) {
 	musicPlayer.nsf_loaded = 1;
 	musicPlayer.paused = 0;
 }
-
 
 
 //Frame Counter Timer
@@ -1169,12 +1140,6 @@ void scan_nsf_file(char * file_name){
 		if (file_byte_left > MAX_ROM_SIZE) return;
 		
 		memset(pROM_Full,0,MAX_ROM_SIZE);
-		
-		//if using bank switching, start adding to the pROM_Full buffer at position load_addr & 0xFFF
-		//else, add at load_addr - 0x8000
-		uint8_t use_bankswitch = 0;
-		for (uint8_t i=0; i<8; ++i) use_bankswitch += file.format.Bankswitch[i];
-		if (use_bankswitch) idx = (idx & 0xFFF) + 0x8000;
 		
 		#define CHUNK_SIZE 256
 		
