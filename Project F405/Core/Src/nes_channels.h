@@ -7,14 +7,6 @@
 
 #pragma anon_unions
 
-__attribute__((always_inline)) void fastmemset(void* out, int fill, int amount) {
-	uint32_t* buf = out;
-	uint32_t bigfill = fill | fill<<8 | fill<<16 | fill<<24;
-	#pragma unroll 4
-	for (int i=amount; i != 0; i -= 4) {
-		*buf++ = bigfill;
-	}
-}
 
 //this is how slow the TIM6 channel is compared to the intended NTSC CPU freq (~1.8 MHz)
 //alternatively, this is how many NTSC CPU cycles have passed between each DAC sample

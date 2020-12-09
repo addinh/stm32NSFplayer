@@ -217,7 +217,7 @@ void readPulse(uint8_t* buffer, const uint16_t buffer_len, PulseChannel* pulse) 
 		if (count > (buffer_len-i)) {
 			count = buffer_len-i;
 		}
-		fastmemset(&buffer[i], PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter] ? pulse->wave.amplitude : 0, count);
+		memset(&buffer[i], PULSE_LOOKUP[pulse->duty][pulse->wave.pulse_counter] ? pulse->wave.amplitude : 0, count);
 		i+= count;
 		pulse->wave.counter = pulse->wave.counter + count*TIMER_HALF_PRESCALER;
 		if (pulse->wave.counter >= pulse->wave.period) {
@@ -317,7 +317,7 @@ void readTriangle(uint8_t* buffer, const uint16_t buffer_len, TriangleChannel* t
 		if (count > (buffer_len-i)) {
 			count = buffer_len-i;
 		}
-		fastmemset(&buffer[i], TRIANGLE_LOOKUP[tri->wave.amplitude_counter], count);
+		memset(&buffer[i], TRIANGLE_LOOKUP[tri->wave.amplitude_counter], count);
 		i+= count;
 		tri->wave.counter = tri->wave.counter + count*TIMER_PRESCALER;
 		if (tri->wave.counter >= tri->wave.period) {

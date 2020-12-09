@@ -101,7 +101,7 @@ TIM_HandleTypeDef htim6;
 
 /* USER CODE BEGIN PV */
 #define DAC_BUFFER_LEN 256
-uint16_t DAC_BUFFER[DAC_BUFFER_LEN + 16] = {0};
+uint16_t DAC_BUFFER[DAC_BUFFER_LEN] = {0};
 
 //music player variables
 //uint8_t song_loaded = 0;
@@ -297,7 +297,7 @@ void initSong(void) {
 	//set flag
 	//__disable_irq();
 	//song_changing = 1;
-	//fastmemset(DAC_BUFFER, 0, DAC_BUFFER_LEN * 2);
+	//memset(DAC_BUFFER, 0, DAC_BUFFER_LEN * 2);
 	uint8_t song_num = musicPlayer.song_select;
 	if (song_num == 0) {
 		musicPlayer.song_loaded = 0;
@@ -346,12 +346,9 @@ void initSong(void) {
 
 
 // Load the SD card data into pROM_Full
-// assume no bank switching for now and put the byte from 0x80 of NSF to load_addr - 0x8000 position of pROM_Full and so on
+// (UNUSED, implemented in scan_nsf_file())
 void load_ROM() {
-	//reset
 	//memset(pROM_Full, 0, 0x8000);
-	
-	//Comment out these lines and do your thing
 	#ifdef SAFE_TESTING
 	int idx = 0xbdc4;
 	for (uint32_t i=0; i<16956; ++i) {
@@ -359,24 +356,11 @@ void load_ROM() {
 	}
 	#endif
 	
-//	int idx = load_address;
-//	for (uint32_t i=0; i<file_byte; ++i) {
-//		pROM_Full[idx - 0x8000 + i] = music_data[i];
-//	}
-	
 }
 
 // Call this function after finishing reading nsf file
 void load_NSF_data(nsf_file* file) {
-	//load NSF data into ROM
-	//int load_address = (int16_t)file.format.load_address_orgin[1]<<8 | file.format.load_address_orgin[0];
-	//load_ROM();
-	
 	//init RAM stuff
-	//comment out these 2 lines and instead use the NSF data
-//	uint16_t init_addr = 0xbe34;
-//	uint16_t play_addr = 0xf2d0;
-//	initRAM(init_addr, play_addr);
 	uint16_t init_addr = (int16_t)file->format.init_address_orgin[1]<<8 | file->format.init_address_orgin[0];
 	uint16_t play_addr = (int16_t)file->format.play_address_orgin[1]<<8 | file->format.play_address_orgin[0];
 	initRAM(init_addr, play_addr);
@@ -394,7 +378,6 @@ void load_NSF_data(nsf_file* file) {
 	}
 	else {
 		for (uint8_t i=0; i<10; ++i) {
-			//TODO: according to famitracker, pROM[i] points to pROM_Full[0x0...] for banks less than load address?
 			if (i >= 2) nBankswitchInitValues[i] = i-2;
 			else nBankswitchInitValues[i] = i;
 		}
@@ -425,7 +408,6 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {
 	* Then remember to add callbacks in button.c
 	*/
 void SW5_pressed_callback(void) {
-	//TODO song select left/right
 	if (!musicPlayer.nsf_loaded) return;
 	switch(selected_detail){
 			case TFT_PAUSE:
@@ -671,9 +653,6 @@ int main(void)
 		//TFT_print thread
 		//Wave generation thread
 		static uint32_t last_tft_ticks = 0;
-
-		//TODO update time = frame rate
-		//TODO trying at 250Hz
 		if (HAL_GetTick() - last_tft_ticks >= 50) {
 			last_tft_ticks = HAL_GetTick();
 			
@@ -756,9 +735,6 @@ int main(void)
 	 }
 		//Wave generation thread
 		static uint32_t last_wav_ticks = 0;
-
-		//TODO update time = frame rate
-		//TODO trying at 250Hz
 		if (HAL_GetTick() - last_wav_ticks >= 1) {
 			last_wav_ticks = HAL_GetTick();
 			
@@ -1190,7 +1166,6 @@ void scan_nsf_file(char * file_name){
 		
 		//program only supports reading up to 9KB music data
 		//if file size too big, cancel
-		//TODO what happens if cancel? tft print something?
 		if (file_byte_left > MAX_ROM_SIZE) return;
 		
 		memset(pROM_Full,0,MAX_ROM_SIZE);
